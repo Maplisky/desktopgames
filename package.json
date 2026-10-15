@@ -1,0 +1,26 @@
+{
+  "name": "desktopgames",
+  "private": true,
+  "packageManager": "pnpm@10.14.0",
+  "scripts": {
+    "dev": "pnpm --parallel --filter @dg/web --filter @dg/server dev",
+    "dev:web": "pnpm --filter @dg/web dev",
+    "dev:server": "pnpm --filter @dg/server dev",
+    "build": "pnpm --filter @dg/web build && pnpm --filter @dg/server build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "lint": "eslint .",
+    "format": "prettier --write ."
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "eslint": "^9.17.0",
+    "prettier": "^3.4.0",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.18.0",
+    "vitest": "^2.1.0"
+  }
+}

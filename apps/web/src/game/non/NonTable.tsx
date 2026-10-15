@@ -1,0 +1,524 @@
+import { useEffect, useRef, useState } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
+import type { GameEvent } from '@dg/protocol';
+import type { NonView } from '@dg/games-night-of-ninja';
+import { CARDS } from '@dg/games-night-of-ninja';
+import { useGame } from '../../store';
+import { send } from '../../net/client';
+import { audio } from '../../audio';
+import { NinjaCard } from '../../components/NinjaCard';
+import ChatPanel from '../../components/ChatPanel';
+
+const HOUSE_LABEL: Record<string, string> = { crane: '鹤之家', lotus: '莲之家', ronin: '浪人' };
+const HOUSE_SIGIL: Record<string, string> = { crane: '🕊️', lotus: '🪷', ronin: '⚔️' };
+
+interface FxFlash {
+  id: number;
+  seat: number;
+  color: string;
+}
+interface FxShuriken {
+  id: number;
+  from: { x: number; y: number };
+  to: { x: number; y: number };
+}
+interface BannerState {
+  kind: 'round';
+  winner: string;
+  sub: string;
+  key: number;
+}
+
+let fxId = 0;
+
+export default function NonTable() {
+  const room = useGame((s) => s.room);
+  const view = useGame((s) => s.gameView) as NonView | null;
+  const lastEvents = useGame((s) => s.lastEvents);
+  const token = useGame((s) => s.token);
+  const pushToast = useGame((s) => s.pushToast);
+  const seq = useRef(0);
+  const lastRev = useRef(0);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const [flashes, setFlashes] = useState<FxFlash[]>([]);
+  const [shurikens, setShurikens] = useState<FxShuriken[]>([]);
+  const [vignette, setVignette] = useState(0);
+  const [banner, setBanner] = useState<BannerState | null>(null);
+  const [targetMode, setTargetMode] = useState<{ card: string; first?: number } | null>(null);
+
+  const me = room?.players.find((p) => p.sessionId === token);
+
+  /* ---------- 事件 → 动画/音效 ---------- */
+  useEffect(() => {
+    if (!lastEvents || lastEvents.rev <= lastRev.current) return;
+    lastRev.current = lastEvents.rev;
+    for (const e of lastEvents.events) {
+      handleEvent(e);
+    }
+  }, [lastEvents]);
+
+  const seatCenter = (seat: number): { x: number; y: number } => {
+    const stage = stageRef.current;
+    const node = document.querySelector(`[data-seat="${seat}"]`);
+    if (!stage || !node) return { x: 0, y: 0 };
+    const s = stage.getBoundingClientRect();
+    const n = node.getBoundingClientRect();
+    return { x: n.left + n.width / 2 - s.left, y: n.top + n.height / 2 - s.top };
+  };
+
+  const flash = (seat: number, color: string) => {
+    const id = ++fxId;
+    setFlashes((f) => [...f, { id, seat, color }]);
+    setTimeout(() => setFlashes((f) => f.filter((x) => x.id !== id)), 700);
+  };
+
+  const fly = (fromSeat: number, toSeat: number) => {
+    const id = ++fxId;
+    setShurikens((s) => [...s, { id, from: seatCenter(fromSeat), to: seatCenter(toSeat) }]);
+    setTimeout(() => setShurikens((s) => s.filter((x) => x.id !== id)), 900);
+  };
+
+  function handleEvent(e: GameEvent) {
+    const p = (e.payload ?? {}) as Record<string, unknown>;
+    switch (e.type) {
+      case 'game:start':
+        audio.scene('night');
+        audio.sfx('deal');
+        break;
+      case 'non:roundStart':
+        setBanner(null);
+        audio.sfx('deal');
+        break;
+      case 'non:draftPicked':
+        audio.sfx('card');
+        break;
+      case 'non:poolPassed':
+        audio.sfx('deal');
+        break;
+      case 'non:committed':
+        audio.sfx('flip');
+        break;
+      case 'non:resolving':
+        audio.sfx('reveal');
+        break;
+      case 'non:killAttempt':
+        fly(Number(p.attacker), Number(p.target));
+        break;
+      case 'non:death':
+        flash(Number(p.seat), 'rgba(255,60,40,0.6)');
+        setVignette((v) => v + 1);
+        audio.sfx('death');
+        break;
+      case 'non:reflected':
+        audio.sfx('reflect');
+        break;
+      case 'non:blocked':
+        flash(Number(p.seat), 'rgba(90,167,214,0.6)');
+        audio.sfx('shield');
+        break;
+      case 'non:spared':
+        audio.sfx('spare');
+        break;
+      case 'non:peek':
+        audio.sfx('peek');
+        pushToast({
+          text: p.self ? '你的新身份：' : `窥见了 ${String(p.target ?? '')} 号位的身份：`,
+          identity: { house: String(p.house), rank: Number(p.rank), otherCard: (p.otherCard as string) ?? null, self: !!p.self },
+        });
+        break;
+      case 'non:exposed':
+        pushToast({
+          text: `${String(p.seat)} 号位的身份被公开了！`,
+          identity: { house: String(p.house), rank: Number(p.rank) },
+        });
+        audio.sfx('reveal');
+        break;
+      case 'non:honor':
+        audio.sfx('token');
+        pushToast({ text: `获得 ${String(p.gained)} 点荣誉（共 ${String(p.total)}）` });
+        break;
+      case 'non:honorDraw':
+        break;
+      case 'non:roundEnd': {
+        const winner = String(p.winner);
+        setBanner({
+          kind: 'round',
+          winner,
+          sub: winner === 'none' ? '平分秋色，双方各无所得' : `${HOUSE_LABEL[winner]} 赢得本回合`,
+          key: ++fxId,
+        });
+        audio.scene('reveal');
+        setTimeout(() => audio.scene('night'), 4000);
+        break;
+      }
+      case 'non:gameEnd':
+        setBanner(null);
+        audio.sfx('win');
+        break;
+      case 'non:silenced':
+        audio.sfx('shield');
+        break;
+      case 'non:identitySwap':
+        audio.sfx('flip');
+        break;
+      default:
+        break;
+    }
+  }
+
+  /* ---------- 动作发送 ---------- */
+  const act = (action: Record<string, unknown> & { type: string }) => {
+    send({ t: 'gameAction', seq: ++seq.current, action });
+    setTargetMode(null);
+  };
+
+  if (!room || !view) {
+    return (
+      <div className="table-page">
+        <div className="game-topbar">
+          <span className="phase">{room?.game?.displayName ?? '对局'}</span>
+        </div>
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-dim)' }}>
+          正在进入对局…
+        </div>
+      </div>
+    );
+  }
+
+  const n = view.players.length;
+  const mySeat = view.you.seat;
+  const seatPos = (seat: number) => {
+    const a = ((seat - mySeat) / n) * Math.PI * 2 + Math.PI / 2; // 我在正下方
+    return { left: `${50 + 41 * Math.cos(a)}%`, top: `${44 + 33 * Math.sin(a)}%` };
+  };
+
+  const myTurnToResolve = view.phase === 'night' && view.nightInfo?.currentSeat === mySeat;
+  const currentCard = view.nightInfo?.currentCardId ? CARDS[view.nightInfo.currentCardId] : null;
+  const needsTarget = myTurnToResolve && currentCard && currentCard.targetKind !== 'none';
+
+  const onSeatClick = (seat: number) => {
+    if (!needsTarget || seat === mySeat) return;
+    const cardId = view.nightInfo!.currentCardId!;
+    if (cardId === 'trick-swap') {
+      if (targetMode?.first === undefined) {
+        setTargetMode({ card: cardId, first: seat });
+      } else if (targetMode.first !== seat) {
+        act({ type: 'non:resolve', target: targetMode.first, target2: seat });
+      }
+      return;
+    }
+    if (cardId === 'shinobi') {
+      setTargetMode({ card: cardId, first: seat });
+      return;
+    }
+    act({ type: 'non:resolve', target: seat });
+  };
+
+  const targetableSeats =
+    needsTarget && targetMode?.card !== 'trick-swap'
+      ? view.players.filter((p) => p.alive && p.seat !== mySeat).map((p) => p.seat)
+      : needsTarget
+        ? view.players.filter((p) => p.alive && p.seat !== mySeat).map((p) => p.seat)
+        : [];
+
+  const phaseHint = () => {
+    switch (view.phase) {
+      case 'draft1':
+      case 'draft2':
+        return view.you.picked ? '已选好，等其他忍者…' : `选 1 张保留（第 ${view.draft?.pickNumber} 抓）`;
+      case 'commit':
+        return view.you.committed ? '已暗选，等其他忍者…' : '从手中暗选 1 张打出';
+      case 'night':
+        if (view.nightInfo?.currentSeat === mySeat)
+          return needsTarget ? `${currentCard?.name}：选择目标` : `${currentCard?.name} 生效中…`;
+        return view.nightInfo?.currentSeat !== null && view.nightInfo?.currentSeat !== undefined
+          ? `${view.players.find((p) => p.seat === view.nightInfo!.currentSeat)?.nickname} 正在行动…`
+          : '夜风掠过…';
+      case 'roundEnd':
+        return '回合结算中…';
+      default:
+        return '';
+    }
+  };
+
+  return (
+    <div className="table-page">
+      <div className="game-topbar">
+        <span className="phase">{room.game?.phaseLabel ?? ''}</span>
+        <span>第 {view.round} 夜</span>
+        {view.nightInfo && (
+          <span>
+            结算 {view.nightInfo.resolvedCount}/{view.nightInfo.total}
+          </span>
+        )}
+        <div className="honor">
+          <span className="honor-chip">🎯 目标 {view.targetHonor}</span>
+          <span className="honor-chip">🏵️ 我的荣誉 {view.you.honor}</span>
+          {me && (
+            <span className="identity-badge" style={{ marginLeft: 8, fontFamily: 'var(--font-body)' }}>
+              {me.avatar} {me.nickname}
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div
+        className="table-stage"
+        ref={stageRef}
+        onTouchStart={() => audio.unlock()}
+      >
+        <div className="table-felt" />
+        <div className="table-center">
+          {view.phase === 'night' && currentCard && view.nightInfo?.currentSeat !== null && (
+            <motion.div
+              key={`${view.round}-${view.nightInfo?.currentSeat}-${view.nightInfo?.currentCardId}`}
+              initial={{ scale: 0.5, opacity: 0, rotate: -8 }}
+              animate={{ scale: 1, opacity: 1, rotate: 0 }}
+            >
+              <NinjaCard cardId={view.nightInfo!.currentCardId!} width={118} />
+              <div style={{ textAlign: 'center', fontSize: 13, color: 'var(--text-dim)', marginTop: 6 }}>
+                {view.players.find((p) => p.seat === view.nightInfo!.currentSeat)?.nickname}
+              </div>
+            </motion.div>
+          )}
+          {view.phase === 'roundEnd' && view.roundResult && (
+            <motion.div initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 56 }}>{HOUSE_SIGIL[view.roundResult.winner] ?? '🌙'}</div>
+              <div style={{ fontFamily: 'var(--font-display)', fontSize: 22, color: 'var(--gold)' }}>
+                {view.roundResult.winner === 'none' ? '无人得分' : `${HOUSE_LABEL[view.roundResult.winner]} 胜`}
+              </div>
+              {view.roundResult.mastermindSeat !== null && (
+                <div style={{ fontSize: 13, color: 'var(--text-dim)' }}>主谋翻盘！</div>
+              )}
+            </motion.div>
+          )}
+          {(view.phase === 'draft1' || view.phase === 'draft2' || view.phase === 'commit') && (
+            <div style={{ fontSize: 54, opacity: 0.85 }}>🈶</div>
+          )}
+          <div className="phase-hint">{phaseHint()}</div>
+        </div>
+
+        {/* 座位环 */}
+        {view.players.map((p) => {
+          const seatPlayer = room.players.find((r) => r.seat === p.seat);
+          const shownId = p.exposedIdentity ?? p.revealedIdentity;
+          const isCurrent = view.nightInfo?.currentSeat === p.seat;
+          return (
+            <div
+              key={p.seat}
+              className={`seat ${p.seat === mySeat ? 'me' : ''} ${!p.alive ? 'dead' : ''} ${
+                isCurrent ? 'active-turn' : ''
+              } ${targetableSeats.includes(p.seat) ? 'targetable' : ''} ${
+                targetMode?.first === p.seat ? 'target-picked' : ''
+              }`}
+              style={seatPos(p.seat)}
+              data-seat={p.seat}
+              onClick={() => onSeatClick(p.seat)}
+            >
+              <div className="avatar-orb">{seatPlayer?.avatar ?? '🥷'}</div>
+              <div className="nick">
+                {p.seat === mySeat ? '我' : p.nickname}
+                {seatPlayer && !seatPlayer.connected && !p.isBot ? ' ·掉线' : ''}
+              </div>
+              <div className="tags">
+                {p.negated && <span title="被封印">❌</span>}
+                {shownId && (
+                  <span className={`identity-badge ${shownId.house}`}>
+                    {shownId.house === 'ronin' ? '浪人' : `第${shownId.rank}席`}
+                  </span>
+                )}
+              </div>
+              <div className="mini-cards">
+                {p.resolvedCard && <NinjaCard cardId={p.resolvedCard} width={30} />}
+                {!p.resolvedCard && p.hasCommitted && (
+                  <div className="card3d" style={{ ['--card-w' as never]: '30px' }}>
+                    <div className="inner">
+                      <div className="back">
+                        <span className="crest" style={{ fontSize: 12 }}>
+                          忍
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {p.seat !== mySeat &&
+                  Array.from({ length: Math.max(0, p.handCount - (p.hasCommitted ? 1 : 0)) }).map((_, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        width: 14,
+                        height: 20,
+                        borderRadius: 3,
+                        background: 'linear-gradient(150deg,#2b2058,#171035)',
+                        border: '1px solid rgba(232,197,116,0.35)',
+                      }}
+                    />
+                  ))}
+              </div>
+            </div>
+          );
+        })}
+
+        {/* 特效层 */}
+        <div className="fx-layer">
+          <AnimatePresence>
+            {shurikens.map((s) => (
+              <motion.div
+                key={s.id}
+                className="shuriken"
+                initial={{ left: s.from.x, top: s.from.y, opacity: 1, rotate: 0, scale: 1 }}
+                animate={{ left: s.to.x, top: s.to.y, opacity: 0.9, rotate: 720, scale: 1.15 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.45, ease: 'easeIn' }}
+                style={{ position: 'absolute' }}
+              >
+                🗡️
+              </motion.div>
+            ))}
+          </AnimatePresence>
+          {flashes.map((f) => {
+            const c = seatCenter(f.seat);
+            return (
+              <motion.div
+                key={f.id}
+                className="seat-flash"
+                style={{ left: c.x, top: c.y, background: `radial-gradient(circle, ${f.color}, transparent 70%)` }}
+                initial={{ opacity: 1, scale: 0.6 }}
+                animate={{ opacity: 0, scale: 1.8 }}
+                transition={{ duration: 0.65 }}
+              />
+            );
+          })}
+        </div>
+
+        {/* 回合横幅 */}
+        <AnimatePresence>
+          {banner && (
+            <motion.div
+              key={banner.key}
+              className={`banner ${banner.winner}`}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setBanner(null)}
+            >
+              <div className="sigil">{HOUSE_SIGIL[banner.winner] ?? '🌙'}</div>
+              <div className="big">{banner.winner === 'none' ? '平局' : `${HOUSE_LABEL[banner.winner]} 得势`}</div>
+              <div className="sub">{banner.sub} · 点击关闭</div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* 终局结算 */}
+        {room.phase === 'result' && view.standings && (
+          <div className="result-overlay">
+            <div className="panel result-card">
+              <h2>夜幕落下</h2>
+              <div className="standings">
+                {view.standings
+                  .slice()
+                  .sort((a, b) => b.honor - a.honor)
+                  .map((s) => {
+                    const winners = view.winners ?? [];
+                    return (
+                      <div key={s.seat} className={`standing-row ${winners.includes(s.seat) ? 'winner' : ''}`}>
+                        <span>{room.players.find((r) => r.seat === s.seat)?.avatar ?? ''}</span>
+                        <span style={{ flex: 1 }}>{s.nickname}</span>
+                        <span className={`identity-badge ${s.identity.house}`}>
+                          {s.identity.house === 'ronin' ? '浪人' : `${HOUSE_LABEL[s.identity.house]}·${s.identity.rank}`}
+                        </span>
+                        <b>🏵️ {s.honor}</b>
+                      </div>
+                    );
+                  })}
+              </div>
+              {me?.sessionId === room.hostSessionId ? (
+                <button className="app-btn primary" onClick={() => send({ t: 'playAgain' })}>
+                  再来一局
+                </button>
+              ) : (
+                <p style={{ color: 'var(--text-dim)' }}>等房主决定是否再来一局…</p>
+              )}
+              <button className="app-btn" style={{ marginTop: 10 }} onClick={() => send({ t: 'leaveRoom' })}>
+                离开
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 我的手牌/候选区 */}
+      <div className="my-hand">
+        <span className={`identity-badge ${view.you.identity.house}`} style={{ position: 'absolute', left: 18, bottom: 16 }}>
+          我的身份 · {HOUSE_LABEL[view.you.identity.house]}
+          {view.you.identity.house !== 'ronin' && ` 第${view.you.identity.rank}席`}
+        </span>
+        {(view.phase === 'draft1' || view.phase === 'draft2') && !view.you.picked && (
+          <div className="cards-row">
+            {view.you.draftPool.map((c) => (
+              <NinjaCard key={c} cardId={c} clickable width={92} onClick={() => act({ type: 'non:draftPick', cardId: c })} />
+            ))}
+          </div>
+        )}
+        {view.phase === 'commit' && !view.you.committed && (
+          <div className="cards-row">
+            {view.you.hand.map((c) => (
+              <NinjaCard key={c} cardId={c} clickable width={100} onClick={() => act({ type: 'non:commit', cardId: c })} />
+            ))}
+          </div>
+        )}
+        {view.phase === 'night' && view.you.committed && (
+          <div className="cards-row" style={{ opacity: 0.85 }}>
+            <NinjaCard cardId={view.you.committed} width={84} selected={view.nightInfo?.currentSeat === mySeat} />
+            {view.you.hand
+              .filter((c) => c !== view.you.committed)
+              .map((c) => (
+                <NinjaCard key={c} cardId={c} width={84} />
+              ))}
+          </div>
+        )}
+        {(view.phase === 'roundEnd' || view.phase === 'gameEnd' || view.you.picked || view.you.committed) &&
+          !(
+            (view.phase === 'draft1' || view.phase === 'draft2') && !view.you.picked
+          ) &&
+          !(view.phase === 'commit' && !view.you.committed) &&
+          !(view.phase === 'night' && view.you.committed) && <span className="hint">{phaseHint()}</span>}
+
+        {/* 忍者（先看后选）：杀/放 */}
+        {targetMode?.card === 'shinobi' && (
+          <div className="hand-actions">
+            <button className="app-btn danger" onClick={() => act({ type: 'non:resolve', target: targetMode.first, choice: 'kill' })}>
+              杀
+            </button>
+            <button className="app-btn" onClick={() => act({ type: 'non:resolve', target: targetMode.first, choice: 'spare' })}>
+              放
+            </button>
+            <button className="app-btn small" onClick={() => setTargetMode(null)}>
+              重选
+            </button>
+          </div>
+        )}
+        {targetMode?.card === 'trick-swap' && targetMode.first !== undefined && (
+          <span className="hint" style={{ color: 'var(--danger)' }}>
+            再点一个座位完成调换（已选 {targetMode.first}）
+          </span>
+        )}
+      </div>
+
+      {/* 对局中迷你聊天 */}
+      <div style={{ position: 'absolute', right: 12, top: 46, bottom: 160, width: 250, zIndex: 25 }}>
+        <ChatPanel />
+      </div>
+
+      {vignette > 0 && (
+        <motion.div
+          key={vignette}
+          className="vignette-kill"
+          initial={{ opacity: 1 }}
+          animate={{ opacity: 0 }}
+          transition={{ duration: 0.9 }}
+        />
+      )}
+    </div>
+  );
+}

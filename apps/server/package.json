@@ -1,0 +1,29 @@
+{
+  "name": "@dg/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "esbuild src/index.ts --bundle --platform=node --format=cjs --outfile=dist/server.cjs --external:fsevents --external:bufferutil --external:utf-8-validate",
+    "start": "node dist/server.cjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@dg/games-core": "workspace:*",
+    "@dg/games-night-of-ninja": "workspace:*",
+    "@dg/protocol": "workspace:*",
+    "pino": "^9.6.0",
+    "socket.io": "^4.8.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "esbuild": "^0.24.0",
+    "socket.io-client": "^4.8.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  }
+}
