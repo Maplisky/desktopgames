@@ -144,17 +144,31 @@ describe('对局（人类 + 机器人）', () => {
       } else if (view.phase === 'commit' && !view.you.committed) {
         send(c1, { t: 'gameAction', seq: ++seq, action: { type: 'non:commit', cardId: view.you.hand[0] } });
       } else if (view.phase === 'night' && view.nightInfo?.currentSeat === view.you.seat) {
-        // 忍者已锁定目标 → 抉择（超时垫步偏好放过）；否则选目标
+        // 忍者已锁定目标 → 抉择；否则按卡型选目标/选项
         if (view.nightInfo.lockedTarget !== null && view.nightInfo.lockedTarget !== undefined) {
           send(c1, { t: 'gameAction', seq: ++seq, action: { type: 'non:choose', choice: 'spare' } });
           return;
         }
         const others = view.players.filter((p: any) => p.alive && p.seat !== view.you.seat).map((p: any) => p.seat);
         if (others.length === 0) return;
-        const action: any = { type: 'non:resolve', target: others[0] };
-        if (view.nightInfo.currentCardId === 'trick-swap') {
+        const cardId = String(view.nightInfo.currentCardId ?? '');
+        const action: any = { type: 'non:resolve' };
+        if (cardId === 'trick-shapeshifter') {
           if (others.length < 2) return; // 双目标不足，交给超时垫步
+          action.target = others[0];
           action.target2 = others[1];
+        } else if (cardId === 'trick-troublemaker') {
+          action.target = others[0];
+          action.choice = 'peek';
+        } else if (cardId === 'trick-spirit-merchant') {
+          action.target = others[0];
+          action.choice = 'house';
+        } else if (cardId === 'trick-thief') {
+          action.choice = 'skip';
+        } else if (cardId === 'trick-gravedigger') {
+          action.mode = 'skip';
+        } else {
+          action.target = others[0];
         }
         send(c1, { t: 'gameAction', seq: ++seq, action });
       }

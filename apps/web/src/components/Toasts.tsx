@@ -28,7 +28,7 @@ export default function Toasts() {
                 </span>
                 {t.identity.otherCard && (
                   <span style={{ marginLeft: 8, color: 'var(--text-dim)' }}>
-                    暗牌：{CARDS[t.identity.otherCard]?.name ?? t.identity.otherCard}
+                    其打出的牌：{CARDS[t.identity.otherCard.split('#')[0]]?.name ?? t.identity.otherCard}
                   </span>
                 )}
               </div>

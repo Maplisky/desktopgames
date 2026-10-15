@@ -22,6 +22,19 @@ const PHASE_TRACK: Array<{ id: string; label: string }> = [
   { id: 'roundEnd', label: '回合结算' },
 ];
 
+/** 变体类诡术师的操作方式（先选方式，再点目标座位） */
+const VARIANTS: Record<string, Array<{ value: string; label: string; hint: string }>> = {
+  'trick-troublemaker': [
+    { value: 'peek', label: '只看', hint: '偷看身份，不公开' },
+    { value: 'reveal', label: '公开', hint: '查看并公开身份' },
+  ],
+  'trick-spirit-merchant': [
+    { value: 'house', label: '看身份', hint: '查看对方身份' },
+    { value: 'token', label: '看代币', hint: '偷看一枚代币面值' },
+    { value: 'swap', label: '换代币', hint: '与对方交换一枚代币' },
+  ],
+};
+
 interface FxFlash {
   id: number;
   seat: number;
@@ -75,6 +88,7 @@ export default function NonTable() {
   const [vignette, setVignette] = useState(0);
   const [banner, setBanner] = useState<BannerState | null>(null);
   const [targetMode, setTargetMode] = useState<{ card: string; first?: number } | null>(null);
+  const [variantChoice, setVariantChoice] = useState<string | null>(null);
 
   const me = room?.players.find((p) => p.sessionId === token);
 
@@ -156,12 +170,40 @@ export default function NonTable() {
       case 'non:spared':
         audio.sfx('spare');
         break;
-      case 'non:peek':
+      case 'non:peek': {
         audio.sfx('peek');
+        if (p.peekToken !== undefined) {
+          pushToast({ text: `偷看到一枚荣誉代币：${String(p.peekToken)} 点` });
+          break;
+        }
         pushToast({
           text: p.self ? '你的新身份：' : `窥见了 ${String(p.target ?? '')} 号位的身份：`,
           identity: { house: String(p.house), rank: Number(p.rank), otherCard: (p.otherCard as string) ?? null, self: !!p.self },
         });
+        break;
+      }
+      case 'non:peek2': {
+        audio.sfx('peek');
+        pushToast({
+          text: `窥见 ${String(p.a)} 号位与 ${String(p.b)} 号位的身份并已秘密交换（他们自己不知道）`,
+          identity: { house: String(p.bHouse), rank: Number(p.bRank) },
+        });
+        break;
+      }
+      case 'non:martyred':
+        flash(Number(p.seat), 'rgba(111,211,160,0.6)');
+        audio.sfx('token');
+        break;
+      case 'non:tokenSteal':
+        audio.sfx('token');
+        pushToast({ text: `${String(p.to)} 号位从 ${String(p.from)} 号位拿走了一枚代币` });
+        break;
+      case 'non:tokenSwap':
+        audio.sfx('flip');
+        pushToast({ text: `${String(p.a)} 号位与 ${String(p.b)} 号位交换了一枚代币` });
+        break;
+      case 'non:graveTaken':
+        audio.sfx('card');
         break;
       case 'non:exposed':
         pushToast({
@@ -250,27 +292,42 @@ export default function NonTable() {
   const locked = view.nightInfo?.lockedTarget ?? null;
   const myTurnToResolve = view.phase === 'night' && view.nightInfo?.currentSeat === mySeat;
   const currentCard = view.nightInfo?.currentCardId ? CARDS[view.nightInfo.currentCardId] : null;
+  const currentCardId = view.nightInfo?.currentCardId ?? '';
   const needsTarget =
-    myTurnToResolve && !!currentCard && currentCard.targetKind !== 'none' && !(currentCard.shinobiStyle && locked !== null);
+    myTurnToResolve &&
+    !!currentCard &&
+    currentCard.targetKind !== 'none' &&
+    currentCard.targetKind !== 'graveyard' &&
+    !(currentCard.shinobiStyle && locked !== null);
 
   const onSeatClick = (seat: number) => {
     if (!needsTarget || seat === mySeat) return;
-    const cardId = view.nightInfo!.currentCardId!;
-    if (cardId === 'trick-swap') {
+    if (currentCardId === 'trick-shapeshifter') {
       if (targetMode?.first === undefined) {
-        setTargetMode({ card: cardId, first: seat });
+        setTargetMode({ card: currentCardId, first: seat });
       } else if (targetMode.first !== seat) {
         act({ type: 'non:resolve', target: targetMode.first, target2: seat });
       }
+      return;
+    }
+    if (VARIANTS[currentCardId]) {
+      if (!variantChoice) return; // 先选操作方式
+      act({ type: 'non:resolve', target: seat, choice: variantChoice });
       return;
     }
     // 含忍者：先发窥视（服务端随后弹出杀/放抉择）
     act({ type: 'non:resolve', target: seat });
   };
 
-  const targetableSeats = needsTarget
-    ? view.players.filter((p) => p.alive && p.seat !== mySeat).map((p) => p.seat)
-    : [];
+  const targetableSeats = (() => {
+    if (!needsTarget) return [];
+    const base = view.players.filter((p) => p.alive && p.seat !== mySeat);
+    if (currentCardId === 'trick-thief') {
+      const myCount = view.you.tokens.length;
+      return base.filter((p) => p.tokenCount > myCount).map((p) => p.seat);
+    }
+    return base.map((p) => p.seat);
+  })();
 
   const phaseHint = () => {
     switch (view.phase) {
@@ -283,6 +340,8 @@ export default function NonTable() {
         if (view.nightInfo?.currentSeat === mySeat) {
           if (currentCard?.shinobiStyle && locked !== null)
             return `已窥视 ${view.players.find((p) => p.seat === locked)?.nickname ?? ''} 的身份 · 选择杀或放`;
+          if (currentCardId === 'trick-gravedigger') return '掘墓人：从弃牌堆拿一张';
+          if (VARIANTS[currentCardId] && !variantChoice) return `${currentCard?.name}：先选操作方式，再点目标`;
           return needsTarget ? `${currentCard?.name}：选择目标` : `${currentCard?.name} 生效中…`;
         }
         return view.nightInfo?.currentSeat !== null && view.nightInfo?.currentSeat !== undefined
@@ -307,7 +366,9 @@ export default function NonTable() {
         )}
         <div className="honor">
           <span className="honor-chip">🎯 目标 {view.targetHonor}</span>
-          <span className="honor-chip">🏵️ 我的荣誉 {view.you.honor}</span>
+          <span className="honor-chip">
+            🏵️ 我的荣誉 {view.you.honor} · {view.you.tokens.length} 枚
+          </span>
           {me && (
             <span className="identity-badge" style={{ marginLeft: 8, fontFamily: 'var(--font-body)' }}>
               {me.avatar} {me.nickname}
@@ -523,10 +584,14 @@ export default function NonTable() {
       {/* 我的手牌/候选区：分区标注，手牌状态一目了然 */}
       <div className="my-hand">
         <div className="hand-meta">
-          <span className={`identity-badge ${view.you.identity.house}`}>
-            我的身份 · {HOUSE_LABEL[view.you.identity.house]}
-            {view.you.identity.house !== 'ronin' && ` 第${view.you.identity.rank}席`}
-          </span>
+          {view.you.identityKnown && view.you.identity ? (
+            <span className={`identity-badge ${view.you.identity.house}`}>
+              我的身份 · {HOUSE_LABEL[view.you.identity.house]}
+              {view.you.identity.house !== 'ronin' && ` 第${view.you.identity.rank}席`}
+            </span>
+          ) : (
+            <span className="identity-badge ronin">🜲 身份不明（被易容师调换）</span>
+          )}
           <span className="hand-pill">{phaseHint()}</span>
         </div>
 
@@ -618,6 +683,62 @@ export default function NonTable() {
             )}
         </div>
 
+        {/* 变体诡术师：先选操作方式，再点目标座位 */}
+        {myTurnToResolve && VARIANTS[currentCardId] && (
+          <div className="hand-actions">
+            <span className="hint">选择操作方式 →</span>
+            {VARIANTS[currentCardId].map((v) => (
+              <button
+                key={v.value}
+                className={`app-btn small ${variantChoice === v.value ? 'primary' : ''}`}
+                title={v.hint}
+                onClick={() => setVariantChoice(v.value)}
+              >
+                {v.label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* 盗贼：点高亮座位偷代币，或跳过 */}
+        {myTurnToResolve && currentCardId === 'trick-thief' && (
+          <div className="hand-actions">
+            <span className="hint">点一个高亮座位拿走一枚代币，或</span>
+            <button className="app-btn small" onClick={() => act({ type: 'non:resolve', choice: 'skip' })}>
+              跳过
+            </button>
+          </div>
+        )}
+
+        {/* 掘墓人：翻桌面中央的弃牌堆 */}
+        {myTurnToResolve && currentCardId === 'trick-gravedigger' && (
+          <div className="grave-panel">
+            {view.discardPile.length === 0 ? (
+              <span className="hint">弃牌堆是空的</span>
+            ) : (
+              view.discardPile.map((d) => (
+                <div key={d} className="grave-item">
+                  <NinjaCard cardId={d} width={72} />
+                  <div className="grave-btns">
+                    <button
+                      className="app-btn small primary"
+                      onClick={() => act({ type: 'non:resolve', pick: d, mode: 'play' })}
+                    >
+                      立即打出
+                    </button>
+                    <button className="app-btn small" onClick={() => act({ type: 'non:resolve', pick: d, mode: 'keep' })}>
+                      收入手牌
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+            <button className="app-btn small" onClick={() => act({ type: 'non:resolve', mode: 'skip' })}>
+              跳过
+            </button>
+          </div>
+        )}
+
         {/* 忍者两步结算：已窥视目标 → 杀/放抉择 */}
         {myTurnToResolve && currentCard?.shinobiStyle && locked !== null && (
           <div className="hand-actions">
@@ -632,7 +753,7 @@ export default function NonTable() {
             </button>
           </div>
         )}
-        {targetMode?.card === 'trick-swap' && targetMode.first !== undefined && (
+        {targetMode?.card === 'trick-shapeshifter' && targetMode.first !== undefined && (
           <span className="hint" style={{ color: 'var(--danger)' }}>
             再点一个座位完成调换（已选 {targetMode.first}）
           </span>

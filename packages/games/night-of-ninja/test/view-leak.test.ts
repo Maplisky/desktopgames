@@ -1,6 +1,6 @@
 import { mulberry32, type GameDefinition, type GameEvent } from '@dg/games-core';
 import { nightOfNinja } from '../src/referee';
-import type { NonState, NonView, NonViewPlayer } from '../src/types';
+import type { NonState, NonView } from '../src/types';
 
 const def = nightOfNinja as GameDefinition<NonState>;
 
@@ -11,7 +11,7 @@ const def = nightOfNinja as GameDefinition<NonState>;
  */
 
 /** 其他玩家视图允许出现的键（不含任何隐藏信息） */
-const ALLOWED_PLAYER_KEYS: (keyof NonViewPlayer)[] = [
+const ALLOWED_PLAYER_KEYS: string[] = [
   'seat',
   'nickname',
   'isBot',
@@ -20,6 +20,7 @@ const ALLOWED_PLAYER_KEYS: (keyof NonViewPlayer)[] = [
   'resolvedCard',
   'negated',
   'handCount',
+  'tokenCount',
   'exposedIdentity',
   'revealedIdentity',
 ];
@@ -31,7 +32,7 @@ const PUBLIC_IDENTITY_EVENTS = new Set([
   'non:gameEnd', // 终局摊牌
 ]);
 
-const HIDDEN_KEYS = ['identity', 'hand', 'committed', 'honor', 'draftPool', 'monkUsed', 'sessionId'];
+const HIDDEN_KEYS = ['identity', 'hand', 'committed', 'honor', 'draftPool', 'monkUsed', 'sessionId', 'tokens', 'identityKnown'];
 
 function makeSeats(n: number) {
   return Array.from({ length: n }, (_, i) => ({ seat: i, sessionId: `s${i}`, nickname: `P${i}`, isBot: false }));

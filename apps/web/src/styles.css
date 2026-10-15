@@ -881,6 +881,26 @@ input.app-input:focus {
   gap: 10px;
   flex-wrap: wrap;
   justify-content: center;
+  align-items: center;
+}
+
+/* 掘墓人弃牌堆面板 */
+.grave-panel {
+  display: flex;
+  gap: 16px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.grave-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.grave-btns {
+  display: flex;
+  gap: 6px;
 }
 
 /* ============ 特效层 ============ */

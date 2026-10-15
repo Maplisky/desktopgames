@@ -3,7 +3,7 @@ export type House = 'crane' | 'lotus' | 'ronin';
 
 export interface Identity {
   house: House;
-  /** 1 最优；浪人无排名（用 99 表示） */
+  /** 1 最优；浪人无排名（99） */
   rank: number;
 }
 
@@ -14,11 +14,13 @@ export interface NonPlayer {
   isBot: boolean;
   /* ---- 服务端私有（绝不出现在他人视图） ---- */
   identity: Identity;
+  /** 是否知晓自己的身份（被易容师秘密交换后为 false） */
+  identityKnown: boolean;
   draftPool: string[];
   hand: string[];
   committed: string | null;
-  honor: number;
-  monkUsed: boolean;
+  /** 荣誉代币（面值仅本人视角可见） */
+  tokens: number[];
   /* ---- 公开进度 ---- */
   alive: boolean;
   resolvedCard: string | null;
@@ -50,9 +52,12 @@ export interface NonState {
   players: NonPlayer[];
   /** 当前轮抽阶段已选完的座位 */
   picked: number[];
+  /** 本回合轮抽弃置的忍者牌（桌面中央，掘墓人可用） */
+  discardPile: string[];
   night: NightState | null;
   roundResult: RoundResult | null;
   winners: number[] | null;
+  /** 代币抽取袋（面值 2/3/4 混洗） */
   tokenPool: number[];
   tokenIdx: number;
   /** 可复现随机状态（mulberry32 内部字） */
@@ -70,7 +75,9 @@ export interface NonViewPlayer {
   resolvedCard: string | null;
   negated: boolean;
   handCount: number;
-  /** 被诡术师公开 / 回合结束揭示的身份 */
+  /** 公开的荣誉代币枚数（面值保密） */
+  tokenCount: number;
+  /** 被公开/回合结束揭示的身份 */
   exposedIdentity: Identity | null;
   revealedIdentity: Identity | null;
 }
@@ -81,8 +88,12 @@ export interface NonView {
   targetHonor: number;
   you: {
     seat: number;
-    identity: Identity;
+    /** 自己的身份；被易容师换过后为 null（身份不明） */
+    identity: Identity | null;
+    identityKnown: boolean;
     honor: number;
+    /** 自己各代币的面值 */
+    tokens: number[];
     alive: boolean;
     hand: string[];
     committed: string | null;
@@ -99,6 +110,9 @@ export interface NonView {
     resolvedCount: number;
     total: number;
   } | null;
+  /** 本回合弃置的忍者牌（掘墓人视角下非空） */
+  discardPile: string[];
+  discardVisible: boolean;
   roundResult: RoundResult | null;
   winners: number[] | null;
   /** gameEnd 时公开全部荣誉 */

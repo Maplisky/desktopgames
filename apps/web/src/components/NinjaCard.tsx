@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion';
-import { CARDS } from '@dg/games-night-of-ninja';
+import { CARDS, parseInst } from '@dg/games-night-of-ninja';
 import { audio } from '../audio';
 
 const TAG_TEXT: Record<string, string> = {
@@ -27,7 +27,9 @@ export function NinjaCard({
   onClick?: () => void;
   title?: string;
 }) {
-  const card = CARDS[cardId];
+  const inst = parseInst(cardId);
+  const card = CARDS[inst.id];
+  const corner = inst.number || card?.number;
   return (
     <motion.div
       className={`card3d ${faceDown ? '' : 'flipped'} ${clickable ? 'clickable' : ''} ${selected ? 'selected' : ''}`}
@@ -52,7 +54,7 @@ export function NinjaCard({
         <div className="face">
           {card && (
             <>
-              <span className="phase-num">{card.phase}</span>
+              {corner ? <span className="phase-num">{corner}</span> : null}
               <span className="glyph">{card.glyph}</span>
               <span className="name">{card.name}</span>
               <span className="tagline">{TAG_TEXT[card.tag] ?? ''}</span>

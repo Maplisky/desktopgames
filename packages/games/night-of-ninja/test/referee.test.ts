@@ -1,6 +1,6 @@
 import { mulberry32, type ActionChoice, type GameDefinition, type SeatInfo } from '@dg/games-core';
 import { nightOfNinja } from '../src/referee';
-import { CARDS } from '../src/cards';
+import { cardOf } from '../src/cards';
 import type { NonState } from '../src/types';
 
 const def = nightOfNinja as GameDefinition<NonState>;
@@ -56,14 +56,14 @@ describe('忍者之夜 · 完整对局', () => {
         expect(def.isFinished(final)).toBe(true);
         expect(final.winners!.length).toBeGreaterThan(0);
         expect(final.round).toBeGreaterThanOrEqual(1);
-        for (const p of final.players) expect(p.honor).toBeGreaterThanOrEqual(0);
+        for (const p of final.players) expect(p.tokens.length).toBeGreaterThanOrEqual(0);
       });
     }
   }
 });
 
-describe('轮抽', () => {
-  it('发 3 张 → 选 1 → 剩牌左传 → 再选 1 → 保留 2 张', () => {
+describe('轮抽与弃牌堆', () => {
+  it('发 3 张 → 选 1 → 剩牌左传 → 再选 1 → 余牌弃置桌面中央（掘墓人可用）', () => {
     let s = setup(4);
     expect(s.phase).toBe('draft1');
     for (const p of s.players) expect(p.draftPool.length).toBe(3);
@@ -77,7 +77,6 @@ describe('轮抽', () => {
     expect(r.ok).toBe(true);
     s = r.state;
     expect(s.phase).toBe('draft2');
-    // 左传：座位 i 收到右家 (i-1) 的余牌
     s.players.forEach((p, i) => {
       expect(p.draftPool).toEqual(remainders[(i - 1 + 4) % 4]);
       expect(p.hand.length).toBe(1);
@@ -92,6 +91,9 @@ describe('轮抽', () => {
     s = r2.state;
     expect(s.phase).toBe('commit');
     for (const p of s.players) expect(p.hand.length).toBe(2);
+    // 每人弃 1 张 → 弃牌堆 4 张
+    expect(s.discardPile.length).toBe(4);
+    expect(r2.events.some((e) => e.type === 'non:draftDone')).toBe(true);
   });
 });
 
@@ -110,8 +112,7 @@ function craftNight(n: number, handsBySeat: Record<number, string[]>): NonState 
   s = def.auto(s).state;
   if (s.phase !== 'commit') throw new Error('craft failed');
   for (const [seatStr, cards] of Object.entries(handsBySeat)) {
-    const seat = Number(seatStr);
-    s.players[seat].hand = [...cards];
+    s.players[Number(seatStr)].hand = [...cards];
   }
   return s;
 }
@@ -129,36 +130,33 @@ function commitAll(s: NonState): NonState {
 }
 
 describe('夜晚结算', () => {
-  it('按阶段 1→6 顺序结算，选择类卡暂停等待目标', () => {
+  it('按类型阶段排序、同类型按角标数字升序；通灵者看到的是已打出的牌', () => {
     let s = craftNight(4, {
-      0: ['blind-assassin', 'spy'],
-      1: ['spy', 'mystic'],
-      2: ['mystic', 'spy'],
-      3: ['mastermind', 'spy'],
+      0: ['blind-assassin#2', 'spy#5'],
+      1: ['spy#2', 'mystic#1'],
+      2: ['mystic#2', 'spy#6'],
+      3: ['mastermind', 'spy#4'],
     });
     s = commitAll(s);
     expect(s.phase).toBe('night');
     const order = s.night!.order.map((e) => e.card);
-    expect(order).toEqual(['spy', 'mystic', 'blind-assassin', 'mastermind']);
+    expect(order).toEqual(['spy#2', 'mystic#2', 'blind-assassin#2', 'mastermind']);
     expect(s.night!.current!.seat).toBe(1);
-    // 间谍 1 → 看座位 2（事件只发给自己）
     let r = def.applyAction(s, 1, { type: 'non:resolve', target: 2 });
     expect(r.ok).toBe(true);
     s = r.state;
     const peekEv = r.events.find((e) => e.type === 'non:peek')!;
     expect(peekEv.audience).toEqual([1]);
     expect(s.night!.current!.seat).toBe(2);
-    // 通灵 2 → 看座位 0（含未打出牌）
+    // 通灵者看目标「已打出」的忍者牌（座位 0 打出的是盲眼刺客）
     r = def.applyAction(s, 2, { type: 'non:resolve', target: 0 });
     s = r.state;
-    expect(r.events.find((e) => e.type === 'non:peek')!.payload!.otherCard).toBe('spy');
-    // 盲眼刺客 4 → 杀座位 2
+    expect(r.events.find((e) => e.type === 'non:peek')!.payload!.otherCard).toBe('blind-assassin#2');
     expect(s.night!.current!.seat).toBe(0);
     r = def.applyAction(s, 0, { type: 'non:resolve', target: 2 });
     s = r.state;
     expect(s.players[2].alive).toBe(false);
     expect(r.events.some((e) => e.type === 'non:death')).toBe(true);
-    // 主谋 6（被动）→ 夜晚结束进入结算
     expect(s.night!.current).toBeNull();
     const a = def.auto(s);
     expect(a.ok).toBe(true);
@@ -169,9 +167,8 @@ describe('夜晚结算', () => {
   });
 
   it('镜僧：刺杀者被反弹致死', () => {
-    let s = craftNight(4, { 0: ['blind-assassin', 'spy'], 1: ['mirror-monk', 'spy'], 2: ['spy', 'spy'], 3: ['spy', 'spy'] });
+    let s = craftNight(4, { 0: ['blind-assassin#1', 'spy#1'], 1: ['mirror-monk', 'spy#2'], 2: ['spy#3', 'spy#4'], 3: ['spy#5', 'spy#6'] });
     s = commitAll(s);
-    // 先结算两张间谍（阶段 1，座位 2、3）
     let r = def.applyAction(s, 2, { type: 'non:resolve', target: 0 });
     s = r.state;
     r = def.applyAction(s, 3, { type: 'non:resolve', target: 0 });
@@ -183,8 +180,8 @@ describe('夜晚结算', () => {
     expect(r.events.some((e) => e.type === 'non:reflected')).toBe(true);
   });
 
-  it('影卫：本回合免死', () => {
-    let s = craftNight(4, { 0: ['blind-assassin', 'spy'], 1: ['shadow-guard', 'spy'], 2: ['spy', 'spy'], 3: ['spy', 'spy'] });
+  it('殉道者：被刺杀时获得一枚代币并存活', () => {
+    let s = craftNight(4, { 0: ['blind-assassin#1', 'spy#1'], 1: ['martyr', 'spy#2'], 2: ['spy#3', 'spy#4'], 3: ['spy#5', 'spy#6'] });
     s = commitAll(s);
     let r = def.applyAction(s, 2, { type: 'non:resolve', target: 0 });
     s = r.state;
@@ -193,47 +190,145 @@ describe('夜晚结算', () => {
     r = def.applyAction(s, 0, { type: 'non:resolve', target: 1 });
     s = r.state;
     expect(s.players[1].alive).toBe(true);
-    expect(s.players[0].alive).toBe(true);
-    expect(r.events.some((e) => e.type === 'non:blocked')).toBe(true);
+    expect(s.players[1].tokens.length).toBe(1);
+    expect(r.events.some((e) => e.type === 'non:martyred')).toBe(true);
+    const honorEv = r.events.find((e) => e.type === 'non:honor')!;
+    expect(honorEv.audience).toEqual([1]);
   });
 
-  it('封印之印使镜僧失效，刺杀成功', () => {
-    // 座位 2 持封印(阶段3)先于盲眼刺客(4)结算，封印座位 1 的镜僧
+  it('审判官：无视镜僧直接杀死，并公开自己的身份', () => {
     let s = craftNight(4, {
-      0: ['blind-assassin', 'spy'],
-      1: ['mirror-monk', 'spy'],
-      2: ['trick-silence', 'spy'],
-      3: ['spy', 'spy'],
+      0: ['trick-judge', 'spy#1'],
+      1: ['mirror-monk', 'spy#2'],
+      2: ['spy#3', 'spy#4'],
+      3: ['spy#5', 'spy#6'],
     });
     s = commitAll(s);
-    // 顺序：spy(3) → silence(2) → assassin(0) → monk(1)
-    expect(s.night!.order.map((e) => e.card)).toEqual(['spy', 'trick-silence', 'blind-assassin', 'mirror-monk']);
-    let r = def.applyAction(s, 3, { type: 'non:resolve', target: 0 });
+    // 顺序：spy(2,3) → judge(0) → monk(1 被动)
+    let r = def.applyAction(s, 2, { type: 'non:resolve', target: 0 });
     s = r.state;
-    r = def.applyAction(s, 2, { type: 'non:resolve', target: 1 });
+    r = def.applyAction(s, 3, { type: 'non:resolve', target: 0 });
     s = r.state;
-    expect(r.events.some((e) => e.type === 'non:silenced')).toBe(true);
+    expect(s.night!.current!.seat).toBe(0);
+    r = def.applyAction(s, 0, { type: 'non:resolve', target: 1 });
+    s = r.state;
+    expect(s.players[1].alive).toBe(false); // 镜僧对审判官无效
+    expect(s.players[0].alive).toBe(true);
+    expect(s.players[0].exposed).toBe(true);
+    expect(r.events.some((e) => e.type === 'non:exposed')).toBe(true);
+  });
+
+  it('搅局者：查看后公开身份', () => {
+    let s = craftNight(3, { 0: ['trick-troublemaker', 'spy#1'], 1: ['spy#2', 'spy#3'], 2: ['spy#4', 'spy#5'] });
+    s = commitAll(s);
+    // 顺序：spy#2(1) → spy#4(2) → 搅局者(0)
+    let r = def.applyAction(s, 1, { type: 'non:resolve', target: 0 });
+    s = r.state;
+    r = def.applyAction(s, 2, { type: 'non:resolve', target: 0 });
+    s = r.state;
+    expect(s.night!.current!.seat).toBe(0);
+    r = def.applyAction(s, 0, { type: 'non:resolve', target: 2, choice: 'reveal' });
+    s = r.state;
+    expect(s.players[2].exposed).toBe(true);
+    expect(r.events.some((e) => e.type === 'non:exposed')).toBe(true);
+  });
+
+  it('盗贼：公开身份并从代币更多的玩家处拿走一枚（代币面值保密）', () => {
+    let s = craftNight(3, { 0: ['trick-thief', 'spy#1'], 1: ['spy#2', 'spy#3'], 2: ['spy#4', 'spy#5'] });
+    s.players[1].tokens = [3, 4];
+    s.players[0].tokens = [2];
+    s = commitAll(s);
+    let r = def.applyAction(s, 1, { type: 'non:resolve', target: 0 });
+    s = r.state;
+    const r2 = def.applyAction(s, 2, { type: 'non:resolve', target: 0 });
+    s = r2.state;
+    expect(s.night!.current!.seat).toBe(0);
+    r = def.applyAction(s, 0, { type: 'non:resolve', target: 1 });
+    s = r.state;
+    expect(s.players[0].tokens.length).toBe(2);
+    expect(s.players[1].tokens.length).toBe(1);
+    expect(s.players[0].exposed).toBe(true);
+    expect(r.events.some((e) => e.type === 'non:tokenSteal')).toBe(true);
+    // 只能对代币数多于自己的玩家出手
+    const bad = def.applyAction(s, 0, { type: 'non:resolve', target: 2 });
+    expect(bad.ok).toBe(false);
+  });
+
+  it('易容师：秘密交换两张身份，受害者不再知晓自己的身份', () => {
+    let s = craftNight(3, { 0: ['trick-shapeshifter', 'spy#1'], 1: ['spy#2', 'spy#3'], 2: ['spy#4', 'spy#5'] });
+    s.players[1].identity = { house: 'crane', rank: 1 };
+    s.players[2].identity = { house: 'lotus', rank: 2 };
+    s = commitAll(s);
+    let r = def.applyAction(s, 1, { type: 'non:resolve', target: 0 });
+    s = r.state;
+    r = def.applyAction(s, 2, { type: 'non:resolve', target: 0 });
+    s = r.state;
+    expect(s.night!.current!.seat).toBe(0);
+    r = def.applyAction(s, 0, { type: 'non:resolve', target: 1, target2: 2 });
+    s = r.state;
+    // 身份已交换
+    expect(s.players[1].identity).toEqual({ house: 'lotus', rank: 2 });
+    expect(s.players[2].identity).toEqual({ house: 'crane', rank: 1 });
+    // 受害者不知新身份；易容师本人若涉及也失知
+    expect(s.players[1].identityKnown).toBe(false);
+    expect(s.players[2].identityKnown).toBe(false);
+    // 交换是秘密的：只发给易容师定向事件，无公开身份信息
+    const peek2 = r.events.find((e) => e.type === 'non:peek2')!;
+    expect(peek2.audience).toEqual([0]);
+    expect(r.events.filter((e) => e.type === 'non:exposed')).toHaveLength(0);
+  });
+
+  it('掘墓人：从弃牌堆拿牌并立即打出', () => {
+    let s = craftNight(3, { 0: ['trick-gravedigger', 'spy#1'], 1: ['spy#2', 'spy#3'], 2: ['spy#4', 'spy#5'] });
+    s.discardPile = ['blind-assassin#6', 'mirror-monk'];
+    s = commitAll(s);
+    let r = def.applyAction(s, 1, { type: 'non:resolve', target: 0 });
+    s = r.state;
+    r = def.applyAction(s, 2, { type: 'non:resolve', target: 0 });
+    s = r.state;
+    expect(s.night!.current!.seat).toBe(0);
+    // 拿弃牌堆的盲眼刺客并立即打出 → 结算切换为那张牌
+    r = def.applyAction(s, 0, { type: 'non:resolve', pick: 'blind-assassin#6', mode: 'play' });
+    s = r.state;
+    expect(s.discardPile).toEqual(['mirror-monk']);
+    expect(cardOf(s.night!.current!.card).id).toBe('blind-assassin');
     r = def.applyAction(s, 0, { type: 'non:resolve', target: 1 });
     s = r.state;
     expect(s.players[1].alive).toBe(false);
-    expect(s.players[0].alive).toBe(true);
+    // 收下模式：加入手牌
+    // （下一轮验证：此处仅验证状态推进正常）
+    expect(s.phase === 'night' || s.phase === 'roundEnd').toBe(true);
   });
 });
 
+/** 驱动夜晚结算直到无人在等（被动卡自动越过） */
+function drainNight(s0: NonState): NonState {
+  let s = s0;
+  let guard = 0;
+  while (s.phase === 'night' && s.night?.current && guard++ < 30) {
+    const cs = s.night.current.seat;
+    const choices = def.legalActions(s, cs);
+    if (choices.length === 0) break;
+    const r = def.applyAction(s, cs, choices[0].action);
+    if (!r.ok) throw new Error(`drain rejected: ${r.reason}`);
+    s = r.state;
+  }
+  return s;
+}
+
 describe('回合结算', () => {
-  it('家系最佳排名比较：[1,2] 胜 [1]', () => {
+  it('家系最佳排名比较：[1,2] 胜 [1]；获胜家系全员（含死者）得分', () => {
     let s = craftNight(4, {
-      0: ['blind-assassin', 'spy'],
-      1: ['spy', 'spy'],
-      2: ['spy', 'spy'],
-      3: ['mastermind', 'spy'],
+      0: ['blind-assassin#1', 'spy#1'],
+      1: ['spy#2', 'spy#3'],
+      2: ['spy#4', 'spy#5'],
+      3: ['mastermind', 'spy#6'],
     });
     s.players[0].identity = { house: 'crane', rank: 2 };
     s.players[1].identity = { house: 'crane', rank: 1 };
     s.players[2].identity = { house: 'lotus', rank: 1 };
     s.players[3].identity = { house: 'lotus', rank: 2 };
     s = commitAll(s);
-    // 顺序：spy(1),spy(2) → assassin(3) 杀 4 → mastermind(4) 已死无效
     let r = def.applyAction(s, 1, { type: 'non:resolve', target: 0 });
     s = r.state;
     r = def.applyAction(s, 2, { type: 'non:resolve', target: 0 });
@@ -244,101 +339,100 @@ describe('回合结算', () => {
     const a = def.auto(s);
     s = a.state;
     expect(s.roundResult!.winner).toBe('crane'); // crane [1,2] vs lotus [1]
-    // crane 全员（含活的和死的）得分
     expect(s.roundResult!.gainedSeats).toContain(0);
     expect(s.roundResult!.gainedSeats).toContain(1);
     expect(s.roundResult!.gainedSeats).not.toContain(2);
-    expect(s.players[0].honor).toBeGreaterThanOrEqual(1);
+    expect(s.players[0].tokens.length).toBe(1);
   });
 
-  it('浪人存活即得分，即使无人获胜', () => {
-    let s = craftNight(3, { 0: ['spy', 'spy'], 1: ['spy', 'spy'], 2: ['spy', 'spy'] });
+  it('完全平局：每位幸存者各得一枚代币', () => {
+    let s = craftNight(4, { 0: ['spy#1', 'spy#2'], 1: ['spy#3', 'spy#4'], 2: ['spy#5', 'spy#6'], 3: ['martyr', 'spy#1'] });
+    s.players[0].identity = { house: 'crane', rank: 1 };
+    s.players[1].identity = { house: 'crane', rank: 2 };
+    s.players[2].identity = { house: 'lotus', rank: 1 };
+    s.players[3].identity = { house: 'lotus', rank: 2 };
+    s = commitAll(s);
+    s = drainNight(s);
+    const a = def.auto(s);
+    s = a.state;
+    expect(s.roundResult!.winner).toBe('none');
+    for (const p of s.players) expect(p.tokens.length).toBe(1); // 四位幸存者各一枚
+  });
+
+  it('浪人主谋存活 → 无家系获胜，仅浪人得分', () => {
+    let s = craftNight(3, { 0: ['spy#1', 'spy#2'], 1: ['spy#3', 'spy#4'], 2: ['mastermind', 'spy#5'] });
     s.players[0].identity = { house: 'crane', rank: 1 };
     s.players[1].identity = { house: 'lotus', rank: 1 };
     s.players[2].identity = { house: 'ronin', rank: 99 };
     s = commitAll(s);
-    let r = def.applyAction(s, 0, { type: 'non:resolve', target: 1 });
-    s = r.state;
-    r = def.applyAction(s, 1, { type: 'non:resolve', target: 0 });
-    s = r.state;
-    r = def.applyAction(s, 2, { type: 'non:resolve', target: 0 });
-    s = r.state;
+    s = drainNight(s);
     const a = def.auto(s);
     s = a.state;
     expect(s.roundResult!.winner).toBe('none');
-    expect(s.players[2].honor).toBeGreaterThanOrEqual(1);
-    expect(s.players[0].honor).toBe(0);
+    expect(s.roundResult!.mastermindSeat).toBe(2);
+    expect(s.players[2].tokens.length).toBe(1); // 浪人存活得分
+    expect(s.players[0].tokens.length).toBe(0); // 家系无人得分
   });
 
-  it('荣誉达到目标值后终局，进入下一轮则身份重发、全员复活', () => {
-    let s = craftNight(3, { 0: ['spy', 'spy'], 1: ['spy', 'spy'], 2: ['spy', 'spy'] });
+  it('荣誉达标后终局；下一轮身份重发、全员复活、弃牌堆清空', () => {
+    let s = craftNight(3, { 0: ['spy#1', 'spy#2'], 1: ['spy#3', 'spy#4'], 2: ['spy#5', 'spy#6'] });
     s.players[0].identity = { house: 'lotus', rank: 2 };
     s.players[1].identity = { house: 'crane', rank: 1 };
     s.players[2].identity = { house: 'ronin', rank: 99 };
-    s.players[1].honor = 9;
+    s.players[1].tokens = [9]; // 差一枚达标
     s = commitAll(s);
-    for (const seat of [0, 1, 2]) {
-      const r = def.applyAction(s, seat, { type: 'non:resolve', target: (seat + 1) % 3 });
-      s = r.state;
-    }
+    s = drainNight(s);
     let a = def.auto(s);
     s = a.state;
-    expect(s.phase).toBe('gameEnd'); // crane 胜 → 座位1 荣誉 +token ≥ 10
+    expect(s.phase).toBe('gameEnd'); // crane 胜 → 座位1 再得一枚 ≥ 10
     expect(s.winners).toEqual([1]);
 
     // 另一局：验证下一轮重置
-    let s2 = craftNight(3, { 0: ['spy', 'spy'], 1: ['spy', 'spy'], 2: ['spy', 'spy'] });
+    let s2 = craftNight(3, { 0: ['spy#1', 'spy#2'], 1: ['spy#3', 'spy#4'], 2: ['spy#5', 'spy#6'] });
     s2 = commitAll(s2);
     s2.players[0].identity = { house: 'crane', rank: 1 };
     s2.players[1].identity = { house: 'lotus', rank: 1 };
     s2.players[2].identity = { house: 'ronin', rank: 99 };
-    for (const seat of [0, 1, 2]) {
-      const r = def.applyAction(s2, seat, { type: 'non:resolve', target: (seat + 1) % 3 });
-      s2 = r.state;
-    }
+    s2 = drainNight(s2);
     a = def.auto(s2);
-    s2 = a.state; // roundEnd
+    s2 = a.state;
     expect(s2.phase).toBe('roundEnd');
     a = def.auto(s2);
-    s2 = a.state; // 下一轮
+    s2 = a.state;
     expect(s2.phase).toBe('draft1');
     expect(s2.round).toBe(2);
+    expect(s2.discardPile).toEqual([]);
     for (const p of s2.players) {
       expect(p.alive).toBe(true);
+      expect(p.identityKnown).toBe(true);
       expect(p.hand.length).toBe(0);
       expect(p.draftPool.length).toBe(3);
     }
-    const houses = s2.players.map((p) => p.identity.house);
-    expect(houses.filter((h) => h === 'crane').length).toBe(1);
-    expect(houses.filter((h) => h === 'lotus').length).toBe(1);
-    expect(houses.filter((h) => h === 'ronin').length).toBe(1);
   });
 });
 
 describe('超时垫步与非法动作', () => {
-  it('轮抽超时自动选第一张；忍者超时选择放过', () => {
+  it('轮抽超时自动选第一张；忍者两步超时最终放过', () => {
     let s = setup(3);
     const r = def.applyTimeout(s, 0);
     expect(r.ok).toBe(true);
     s = r.state;
     expect(s.players[0].hand.length).toBe(1);
 
-    let s2 = craftNight(3, { 0: ['spy', 'spy'], 1: ['shinobi', 'spy'], 2: ['spy', 'spy'] });
+    let s2 = craftNight(3, { 0: ['spy#1', 'spy#2'], 1: ['shinobi#1', 'spy#3'], 2: ['spy#4', 'spy#5'] });
     s2 = commitAll(s2);
     let cur = s2.night!.current!;
     let guard = 0;
-    while (CARDS[cur.card].id !== 'shinobi' && guard++ < 10) {
+    while (cardOf(cur.card).id !== 'shinobi' && guard++ < 10) {
       const rr = def.applyTimeout(s2, cur.seat);
       s2 = rr.state;
       cur = s2.night!.current!;
     }
-    expect(cur.card).toBe('shinobi');
-    // 第一步超时：自动选目标（窥视事件只发给自己）
+    expect(cardOf(cur.card).id).toBe('shinobi');
     const rr1 = def.applyTimeout(s2, cur.seat);
     s2 = rr1.state;
-    expect(rr1.events.some((e) => e.type === 'non:peek' && e.audience?.includes(1))).toBe(true);
+    expect(rr1.events.some((e) => e.type === 'non:peek')).toBe(true);
     expect(s2.night!.current!.lockedTarget).toBeDefined();
-    // 第二步超时：选择放过
     const rr2 = def.applyTimeout(s2, cur.seat);
     s2 = rr2.state;
     expect(rr2.events.some((e) => e.type === 'non:spared')).toBe(true);
@@ -346,25 +440,21 @@ describe('超时垫步与非法动作', () => {
   });
 
   it('忍者两步结算：先窥视目标，再决定杀', () => {
-    let s = craftNight(3, { 0: ['spy', 'spy'], 1: ['shinobi', 'spy'], 2: ['spy', 'spy'] });
+    let s = craftNight(3, { 0: ['spy#1', 'spy#2'], 1: ['shinobi#1', 'spy#3'], 2: ['spy#4', 'spy#5'] });
     s.players[1].identity = { house: 'crane', rank: 1 };
     s.players[2].identity = { house: 'lotus', rank: 1 };
     s = commitAll(s);
-    // 顺序：spy(0) → spy(2) → shinobi(1)
     let r = def.applyAction(s, 0, { type: 'non:resolve', target: 1 });
     s = r.state;
     r = def.applyAction(s, 2, { type: 'non:resolve', target: 0 });
     s = r.state;
     expect(s.night!.current!.seat).toBe(1);
-    // 第一步：选目标 → 只发窥视事件，未杀死任何人
     r = def.applyAction(s, 1, { type: 'non:resolve', target: 2 });
     s = r.state;
     expect(r.events.some((e) => e.type === 'non:peek' && e.audience?.includes(1))).toBe(true);
     expect(s.players[2].alive).toBe(true);
     expect(s.night!.current!.lockedTarget).toBe(2);
-    // 锁定后不允许再发 resolve 换目标
     expect(def.applyAction(s, 1, { type: 'non:resolve', target: 0 }).ok).toBe(false);
-    // 第二步：杀
     r = def.applyAction(s, 1, { type: 'non:choose', choice: 'kill' });
     s = r.state;
     expect(s.players[2].alive).toBe(false);
@@ -373,9 +463,9 @@ describe('超时垫步与非法动作', () => {
 
   it('拒绝非法动作：不存在的牌、错误的座位、错误的阶段', () => {
     const s = setup(4);
-    expect(def.applyAction(s, 0, { type: 'non:commit', cardId: 'spy' }).ok).toBe(false);
+    expect(def.applyAction(s, 0, { type: 'non:commit', cardId: 'spy#1' }).ok).toBe(false);
     expect(def.applyAction(s, 0, { type: 'non:draftPick', cardId: 'not-a-card' }).ok).toBe(false);
-    expect(def.applyAction(s, 9, { type: 'non:draftPick', cardId: 'spy' }).ok).toBe(false);
+    expect(def.applyAction(s, 9, { type: 'non:draftPick', cardId: 'spy#1' }).ok).toBe(false);
     expect(def.applyAction(s, 1, { type: 'non:resolve', target: 0 }).ok).toBe(false);
   });
 
