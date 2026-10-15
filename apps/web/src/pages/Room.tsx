@@ -16,9 +16,11 @@ export default function Room() {
   const lastErrorCode = useGame((s) => s.lastErrorCode);
   const joinedRef = useRef(false);
 
-  // 房间不存在（服务器重启/码错误）→ 回大厅
+  // 房间不存在/已开局/已满（服务器重启、码错误、迟到）→ 回大厅
   useEffect(() => {
-    if (!room && lastErrorCode === 'room-not-found') navigate('/', { replace: true });
+    if (!room && ['room-not-found', 'game-running', 'room-full'].includes(lastErrorCode ?? '')) {
+      navigate('/', { replace: true });
+    }
   }, [room, lastErrorCode, navigate]);
 
   // 进页面自动加入该房间（一次）；必须等 hello 完成之后再 join

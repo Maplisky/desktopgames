@@ -428,7 +428,13 @@ export default function NonTable() {
               initial={{ scale: 0.5, opacity: 0, rotate: -8 }}
               animate={{ scale: 1, opacity: 1, rotate: 0 }}
             >
-              <NinjaCard cardId={view.nightInfo!.currentCardId!} width={118} />
+              <NinjaCard
+                cardId={
+                  view.players.find((p) => p.seat === view.nightInfo!.currentSeat)?.resolvedCard ??
+                  view.nightInfo!.currentCardId!
+                }
+                width={118}
+              />
               <div style={{ textAlign: 'center', fontSize: 13, color: 'var(--text-dim)', marginTop: 6 }}>
                 {view.players.find((p) => p.seat === view.nightInfo!.currentSeat)?.nickname}
               </div>
@@ -475,6 +481,9 @@ export default function NonTable() {
               </div>
               <div className="tags">
                 {p.negated && <span title="被封印">❌</span>}
+                {p.tokenCount > 0 && (
+                  <span title={`持有 ${p.tokenCount} 枚荣誉代币`}>🏵️{p.tokenCount}</span>
+                )}
                 {shownId && (
                   <span className={`identity-badge ${shownId.house}`}>
                     {shownId.house === 'ronin' ? '浪人' : `第${shownId.rank}席`}

@@ -149,7 +149,7 @@ function applyEffect(
       break;
     }
     case 'trick-shapeshifter': {
-      // 交换的是两个目标之间（易容师本人不动）；官方：秘密交换，受害者不知新身份
+      // 交换的是两个目标之间（可包含易容师本人）；官方：秘密交换，被换者不知新身份
       const a = s.players[args.target!];
       const b = s.players[args.target2!];
       events.push(
@@ -170,8 +170,9 @@ function applyEffect(
       const ia = { ...a.identity };
       a.identity = { ...b.identity };
       b.identity = ia;
-      a.identityKnown = false;
-      b.identityKnown = false;
+      // 易容师亲眼看过两张牌：若自己参与交换，仍知道自己的新身份；其他被换者不知情
+      if (a.seat !== seat) a.identityKnown = false;
+      if (b.seat !== seat) b.identityKnown = false;
       break;
     }
     case 'trick-gravedigger': {
@@ -497,7 +498,13 @@ function act(
         const i = s.discardPile.indexOf(pick);
         if (i < 0) return { ok: false, reason: '该牌不在弃牌堆中' };
         s.discardPile.splice(i, 1);
-        events.push(ev('non:graveTaken', { seat, cardId: parseInst(pick).id, mode }));
+        if (mode === 'keep') {
+          // 收下的牌保密：公开事件只带 mode，牌 id 仅发给掘墓人本人
+          events.push(ev('non:graveTaken', { seat, mode }));
+          events.push(ev('non:graveTaken', { seat, mode, cardId: parseInst(pick).id }, [seat]));
+        } else {
+          events.push(ev('non:graveTaken', { seat, mode, cardId: parseInst(pick).id }));
+        }
         if (mode === 'keep') {
           p.hand.push(pick);
           s.night.current = null;
@@ -545,6 +552,8 @@ function act(
           return { ok: false, reason: '只能对代币数多于你的玩家出手' };
         if (card.id === 'trick-spirit-merchant' && !['house', 'token', 'swap'].includes(choice ?? ''))
           return { ok: false, reason: '需要选择查看身份/看代币/交换' };
+        if (card.id === 'trick-spirit-merchant' && choice === 'swap' && (p.tokens.length === 0 || t.tokens.length === 0))
+          return { ok: false, reason: '双方都需持有代币才能交换' };
         if (card.id === 'trick-troublemaker' && !['peek', 'reveal'].includes(choice ?? ''))
           return { ok: false, reason: '需要选择只看或公开' };
       }
@@ -603,12 +612,18 @@ function nightChoices(state: NonState, seat: number): ActionChoice[] {
         mk({ target: t, choice: 'peek' }, '只看', `偷看 ${state.players[t].nickname} 的身份`),
         mk({ target: t, choice: 'reveal' }, '公开', `查看并公开 ${state.players[t].nickname} 的身份`),
       ]);
-    case 'trick-spirit-merchant':
-      return others.flatMap((t) => [
-        mk({ target: t, choice: 'house' }, '看身份', `查看 ${state.players[t].nickname} 的身份`),
-        mk({ target: t, choice: 'token' }, '看代币', `偷看 ${state.players[t].nickname} 的一枚代币面值`),
-        mk({ target: t, choice: 'swap' }, '换代币', `与 ${state.players[t].nickname} 交换一枚代币`),
-      ]);
+    case 'trick-spirit-merchant': {
+      const me2 = state.players[seat];
+      return others.flatMap((t) => {
+        const tp = state.players[t];
+        const opts = [mk({ target: t, choice: 'house' }, '看身份', `查看 ${tp.nickname} 的身份`)];
+        if (tp.tokens.length > 0)
+          opts.push(mk({ target: t, choice: 'token' }, '看代币', `偷看 ${tp.nickname} 的一枚代币面值`));
+        if (tp.tokens.length > 0 && me2.tokens.length > 0)
+          opts.push(mk({ target: t, choice: 'swap' }, '换代币', `与 ${tp.nickname} 交换一枚代币`));
+        return opts;
+      });
+    }
     case 'trick-thief': {
       const rich = state.players.filter((q) => q.alive && q.seat !== seat && q.tokens.length > state.players[seat].tokens.length);
       const out = rich.map((q) => mk({ target: q.seat }, '偷', `从代币更多的 ${q.nickname} 处拿一枚`));
@@ -759,8 +774,10 @@ export const nightOfNinja: GameDefinition<NonState> = {
   applyTimeout(state: NonState, seat: number) {
     const choices = this.legalActions(state, seat);
     if (choices.length === 0) return { ok: false as const, reason: '无可用垫步动作' };
+    // 垫步尽量保守：可跳过则跳过（盗贼/掘墓人），可放过则放过（忍者），否则选第一个
+    const skip = choices.find((c) => c.action.choice === 'skip' || c.action.mode === 'skip');
     const spare = choices.find((c) => c.action.choice === 'spare');
-    return this.applyAction(state, seat, (spare ?? choices[0]).action);
+    return this.applyAction(state, seat, (skip ?? spare ?? choices[0]).action);
   },
 
   auto(state: NonState) {

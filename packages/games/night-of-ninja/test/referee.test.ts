@@ -488,6 +488,59 @@ describe('超时垫步与非法动作', () => {
     }
   });
 
+  it('掘墓人：收下弃牌不向其他人泄露牌 id（仅本人收到定向事件）', () => {
+    let s = craftNight(3, { 0: ['trick-gravedigger', 'spy#1'], 1: ['spy#2', 'spy#3'], 2: ['spy#4', 'spy#5'] });
+    s.discardPile = ['mirror-monk', 'blind-assassin#6'];
+    s = commitAll(s);
+    let r = def.applyAction(s, 1, { type: 'non:resolve', target: 0 });
+    s = r.state;
+    r = def.applyAction(s, 2, { type: 'non:resolve', target: 0 });
+    s = r.state;
+    // 收下镜僧
+    r = def.applyAction(s, 0, { type: 'non:resolve', pick: 'mirror-monk', mode: 'keep' });
+    s = r.state;
+    expect(s.players[0].hand).toContain('mirror-monk');
+    const taken = r.events.filter((e) => e.type === 'non:graveTaken');
+    // 公开版本（无 audience）不得含 cardId；带 cardId 的版本必须定向给掘墓人
+    for (const e of taken) {
+      if (!e.audience || e.audience.length === 0) {
+        expect(e.payload?.cardId).toBeUndefined();
+      } else {
+        expect(e.audience).toEqual([0]);
+        expect(e.payload?.cardId).toBe('mirror-monk');
+      }
+    }
+  });
+
+  it('超时垫步保守优先：掘墓人跳过、盗贼不偷', () => {
+    let s = craftNight(3, { 0: ['trick-gravedigger', 'spy#1'], 1: ['spy#2', 'spy#3'], 2: ['spy#4', 'spy#5'] });
+    s.discardPile = ['blind-assassin#6'];
+    s = commitAll(s);
+    let r = def.applyAction(s, 1, { type: 'non:resolve', target: 0 });
+    s = r.state;
+    r = def.applyAction(s, 2, { type: 'non:resolve', target: 0 });
+    s = r.state;
+    // 掘墓人超时 → 跳过（不会替玩家打出刺杀牌）
+    r = def.applyTimeout(s, 0);
+    s = r.state;
+    expect(s.discardPile).toContain('blind-assassin#6');
+    expect(s.players[1].alive).toBe(true);
+
+    // 盗贼超时 → 跳过偷取
+    let s2 = craftNight(3, { 0: ['trick-thief', 'spy#1'], 1: ['spy#2', 'spy#3'], 2: ['spy#4', 'spy#5'] });
+    s2.players[1].tokens = [3];
+    s2 = commitAll(s2);
+    let r2 = def.applyAction(s2, 1, { type: 'non:resolve', target: 0 });
+    s2 = r2.state;
+    r2 = def.applyAction(s2, 2, { type: 'non:resolve', target: 0 });
+    s2 = r2.state;
+    r2 = def.applyTimeout(s2, 0);
+    s2 = r2.state;
+    expect(s2.players[0].tokens.length).toBe(0); // 没有偷到代币
+    expect(s2.players[1].tokens.length).toBe(1);
+    expect(s2.players[0].exposed).toBe(false); // 跳过 = 什么都不做，也不公开身份
+  });
+
   it('掘墓人：无目标类牌（镜僧/殉道者/主谋）只能收下，不能立即打出', () => {
     let s = craftNight(3, { 0: ['trick-gravedigger', 'spy#1'], 1: ['spy#2', 'spy#3'], 2: ['spy#4', 'spy#5'] });
     s.discardPile = ['mirror-monk', 'blind-assassin#6'];
