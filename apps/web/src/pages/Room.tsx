@@ -14,7 +14,7 @@ export default function Room() {
   const connected = useGame((s) => s.connected);
   const profile = useGame((s) => s.profile);
   const lastErrorCode = useGame((s) => s.lastErrorCode);
-  const joinedRef = useRef(false);
+  const lastJoinCode = useRef<string | null>(null);
 
   // 房间不存在/已开局/已满（服务器重启、码错误、迟到）→ 回大厅
   useEffect(() => {
@@ -23,12 +23,13 @@ export default function Room() {
     }
   }, [room, lastErrorCode, navigate]);
 
-  // 进页面自动加入该房间（一次）；必须等 hello 完成之后再 join
+  // 进页面自动加入该房间（每个房间码只尝试一次）；必须等 hello 完成之后再 join
   useEffect(() => {
-    if (!code || joinedRef.current) return;
+    if (!code) return;
+    if (lastJoinCode.current === code.toUpperCase()) return;
     if (room && room.code === code.toUpperCase()) return;
     if (!connected || !profile.nickname || !token) return;
-    joinedRef.current = true;
+    lastJoinCode.current = code.toUpperCase();
     send({ t: 'joinRoom', code: code.toUpperCase() });
   }, [code, room, token, connected, profile.nickname]);
 

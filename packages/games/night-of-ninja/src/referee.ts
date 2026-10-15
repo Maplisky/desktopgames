@@ -148,6 +148,11 @@ function resolveNext(s: NonState, events: GameEvent[]) {
       continue;
     }
     night.current = { seat: entry.seat, card: entry.card };
+    // 掘墓人：官方规则「查看两张弃置的忍者牌」——结算开始时预抽至多两张
+    if (cardOf(entry.card).id === 'trick-gravedigger' && s.discardPile.length > 0) {
+      const pool = shuffled(s, s.discardPile);
+      night.current.graveLook = pool.slice(0, 2);
+    }
     events.push(ev('non:resolving', { seat: entry.seat, cardId: parseInst(entry.card).id }));
     if (nightChoices(s, entry.seat).length === 0) {
       night.current = null;
@@ -166,7 +171,7 @@ function applyEffect(
   s: NonState,
   seat: number,
   cardId: string,
-  args: { target?: number; target2?: number; choice?: string; pick?: string; mode?: string },
+  args: { target?: number; target2?: number; choice?: string; pick?: string; mode?: string; giveIdx?: number },
   events: GameEvent[],
 ) {
   const id = parseInst(cardId).id;
@@ -240,11 +245,13 @@ function applyEffect(
         events.push(ev('non:peek', { target: target!.seat, peekToken: v }, [seat]));
       } else if (args.choice === 'swap') {
         if (me.tokens.length > 0 && target!.tokens.length > 0) {
-          const mi = Math.floor(rngStep(s) * me.tokens.length);
+          // 官方 FAQ：任选自己一枚给出（面值仅自己可见，可挑着给），换对方随机一枚
+          const gi = Math.min(Math.max(0, args.giveIdx ?? 0), me.tokens.length - 1);
+          const mv = me.tokens.splice(gi, 1)[0];
           const ti = Math.floor(rngStep(s) * target!.tokens.length);
-          const mv = me.tokens[mi];
-          me.tokens[mi] = target!.tokens[ti];
-          target!.tokens[ti] = mv;
+          const tv = target!.tokens.splice(ti, 1)[0];
+          me.tokens.push(tv);
+          target!.tokens.push(mv);
           events.push(ev('non:tokenSwap', { a: me.seat, b: target!.seat }));
           events.push(ev('non:honor', { gained: 0, note: 'swap', total: sumTokens(me) }, [me.seat]));
           events.push(ev('non:honor', { gained: 0, note: 'swap', total: sumTokens(target!) }, [target!.seat]));
@@ -467,8 +474,12 @@ function nightChoices(state: NonState, seat: number): ActionChoice[] {
         const opts = [mk({ target: t, choice: 'house' }, '看身份', `查看 ${tp.nickname} 的身份`)];
         if (tp.tokens.length > 0)
           opts.push(mk({ target: t, choice: 'token' }, '看代币', `偷看 ${tp.nickname} 的一枚代币面值`));
+        // 官方 FAQ：任选自己一枚给出（面值仅自己可见）
         if (tp.tokens.length > 0 && me2.tokens.length > 0)
-          opts.push(mk({ target: t, choice: 'swap' }, '换代币', `与 ${tp.nickname} 交换一枚代币`));
+          for (let i = 0; i < me2.tokens.length; i++)
+            opts.push(
+              mk({ target: t, choice: 'swap', giveIdx: i }, `换·给第 ${i + 1} 枚`, `把自己第 ${i + 1} 枚代币与 ${tp.nickname} 随机一枚交换`),
+            );
         return opts;
       });
     }
@@ -505,8 +516,9 @@ function nightChoices(state: NonState, seat: number): ActionChoice[] {
       return out;
     }
     case 'trick-gravedigger': {
-      // 无目标类牌（反应/被动）只能收下，不能「立即打出」
-      const out: ActionChoice[] = state.discardPile
+      // 官方：只看两张（结算开始时已抽定 graveLook）
+      const look = cur.graveLook ?? [];
+      const out: ActionChoice[] = look
         .filter((d) => cardOf(d).targetKind !== 'none')
         .map((d): ActionChoice[] => [
           {
@@ -519,8 +531,7 @@ function nightChoices(state: NonState, seat: number): ActionChoice[] {
           },
         ])
         .flat();
-      const keepOnly = state.discardPile.filter((d) => cardOf(d).targetKind === 'none');
-      for (const d of keepOnly) {
+      for (const d of look.filter((d) => cardOf(d).targetKind === 'none')) {
         out.push({
           action: { type: 'non:resolve', pick: d, mode: 'keep' },
           ui: { kind: 'button', label: `收下·${CARDS[parseInst(d).id].name}`, prompt: `将 ${CARDS[parseInst(d).id].name} 收入手牌` },
@@ -691,9 +702,10 @@ function act(
           return null;
         }
         const pick = String(action.pick ?? '');
-        const i = s.discardPile.indexOf(pick);
-        if (i < 0) return { ok: false, reason: '该牌不在弃牌堆中' };
-        s.discardPile.splice(i, 1);
+        const look = s.night.current.graveLook ?? [];
+        if (!look.includes(pick) || !s.discardPile.includes(pick))
+          return { ok: false, reason: '只能拿取你查看过的两张弃牌' };
+        s.discardPile.splice(s.discardPile.indexOf(pick), 1);
         if (mode === 'keep') {
           events.push(ev('non:graveTaken', { seat, mode }));
           events.push(ev('non:graveTaken', { seat, mode, cardId: parseInst(pick).id }, [seat]));
@@ -752,7 +764,7 @@ function act(
           return { ok: false, reason: '需要两个不同目标' };
         if (!s.players[target2]?.alive || !s.players[target]?.alive) return { ok: false, reason: '目标无效' };
       }
-      applyEffect(s, seat, cardId, { target, target2, choice }, events);
+      applyEffect(s, seat, cardId, { target, target2, choice, giveIdx: action.giveIdx !== undefined ? Number(action.giveIdx) : undefined }, events);
       if (s.night.pendingKill) return null; // 刺杀宣告，等待目标反应
       s.night.current = null;
       s.night.qIdx += 1;

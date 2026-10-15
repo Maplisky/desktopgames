@@ -41,6 +41,7 @@ export interface RoundResult {
  * - window：某类型阶段开放中，持有者各自选择打出（立即公开）或保留；
  * - queue/window 关闭后按角标数字升序排列的结算队列；
  * - current：正在结算的牌（等待目标选择/杀放抉择）；
+ *   gravedigger 结算时预抽取的至多两张弃牌（graveLook，官方：只看两张）；
  * - pendingKill：刺杀已宣告，等待目标从手牌打出反应牌（镜僧/殉道者）或承受。
  */
 export interface NightState {
@@ -49,7 +50,7 @@ export interface NightState {
   window: { phase: number; holders: number[]; played: Array<{ seat: number; card: string }>; passed: number[] } | null;
   queue: Array<{ seat: number; card: string }>;
   qIdx: number;
-  current: { seat: number; card: string; lockedTarget?: number } | null;
+  current: { seat: number; card: string; lockedTarget?: number; graveLook?: string[] } | null;
   pendingKill: { attacker: number; target: number } | null;
 }
 

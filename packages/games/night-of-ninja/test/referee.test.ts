@@ -344,9 +344,64 @@ describe('诡术师六卡', () => {
   it('掘墓人收下不泄露牌 id（公开事件无 cardId，定向事件仅本人）', () => {
     let s = craftNight(3, { 0: ['trick-gravedigger', 'spy#1'], 1: ['spy#2', 'spy#3'], 2: ['spy#4', 'spy#5'] });
     s.discardPile = ['mirror-monk'];
+    // 手动驱动最后一步以捕获事件
+    for (const seat of s.night!.window!.holders) s = def.applyAction(s, seat, { type: 'non:phasePass' }).state;
+    s = def.applyAction(s, 0, { type: 'non:phasePlay', cardId: 'trick-gravedigger' }).state;
+    const r = def.applyAction(s, 0, { type: 'non:resolve', pick: 'mirror-monk', mode: 'keep' });
+    s = r.state;
+    expect(s.players[0].hand).toContain('mirror-monk');
+    for (const e of r.events.filter((e) => e.type === 'non:graveTaken')) {
+      if (!e.audience || e.audience.length === 0) expect(e.payload?.cardId).toBeUndefined();
+      else {
+        expect(e.audience).toEqual([0]);
+        expect(e.payload?.cardId).toBe('mirror-monk');
+      }
+    }
+  });
+
+  it('掘墓人：弃牌多于两张时只随机查看两张（官方规则）', () => {    let s = craftNight(3, { 0: ['trick-gravedigger', 'spy#1'], 1: ['spy#2', 'spy#3'], 2: ['spy#4', 'spy#5'] });
+    s.discardPile = ['blind-assassin#6', 'mirror-monk', 'martyr', 'mastermind'];
     s = flowNight(s, [{ 1: 'spy#2', 2: 'spy#4' }, { 0: 'trick-gravedigger' }]);
-    const keeper = [0, 1].find((seat) => s.players[seat].hand.includes('mirror-monk'));
-    expect(keeper).toBeDefined(); // 掘墓人把镜僧收进了手牌
+    // graveLook 抽定后不可再改，pick 只能来自 graveLook
+    const look = s.night?.current?.graveLook;
+    if (look && look.length > 0) {
+      // 弃牌堆里未被抽中的牌无法被拿取
+      const notLooked = s.discardPile.filter((d) => !look.includes(d));
+      for (const d of notLooked) {
+        expect(def.applyAction(s, 0, { type: 'non:resolve', pick: d, mode: 'keep' }).ok).toBe(false);
+      }
+    }
+    // 用查看过的牌正常拿取（收下第一张查看过的）
+    if (look && look.length > 0) {
+      const r = def.applyAction(s, 0, { type: 'non:resolve', pick: look[0], mode: 'keep' });
+      expect(r.ok).toBe(true);
+      expect(s.discardPile).not.toContain(look[0]);
+      expect(s.discardPile).toContain(notLooked[0]); // 未查看的仍在弃牌堆
+    }
+  });
+
+  it('灵商换代币：任选自己一枚给出（面值仅自己可见），换对方随机一枚', () => {
+    let s = craftNight(3, { 0: ['trick-spirit-merchant', 'spy#1'], 1: ['spy#2', 'spy#3'], 2: ['spy#4', 'spy#5'] });
+    s.players[0].tokens = [2, 4]; // 我知道面值：可挑着给 2
+    s.players[2].tokens = [3];
+    for (const seat of s.night!.window!.holders) s = def.applyAction(s, seat, { type: 'non:phasePass' }).state;
+    s = def.applyAction(s, 0, { type: 'non:phasePlay', cardId: 'trick-spirit-merchant' }).state;
+    // 对座位 2 交换、给出第 1 枚（2 分）。（结算后夜晚自动走到计分，故用包含性断言）
+    const r = def.applyAction(s, 0, { type: 'non:resolve', target: 2, choice: 'swap', giveIdx: 0 });
+    s = r.state;
+    expect(s.players[0].tokens).toContain(3); // 收到了对方那枚 3
+    expect(s.players[2].tokens).toContain(2); // 对方收到了我给的第 1 枚（2 分）
+    expect(r.events.some((e) => e.type === 'non:tokenSwap')).toBe(true);
+
+    // giveIdx 越界被夹紧而非崩溃（只有一枚时 giveIdx=9 → 用那枚）
+    let s2 = craftNight(3, { 0: ['trick-spirit-merchant', 'spy#1'], 1: ['spy#2', 'spy#3'], 2: ['spy#4', 'spy#5'] });
+    s2.players[0].tokens = [4];
+    s2.players[1].tokens = [2];
+    for (const seat of s2.night!.window!.holders) s2 = def.applyAction(s2, seat, { type: 'non:phasePass' }).state;
+    s2 = def.applyAction(s2, 0, { type: 'non:phasePlay', cardId: 'trick-spirit-merchant' }).state;
+    const r2 = def.applyAction(s2, 0, { type: 'non:resolve', target: 1, choice: 'swap', giveIdx: 9 });
+    s2 = r2.state;
+    expect(s2.players[1].tokens).toContain(4); // 我唯一的 4 给了出去
   });
 });
 

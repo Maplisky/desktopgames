@@ -41,9 +41,12 @@ export default function Lobby() {
     const unwatch = useGame.subscribe((s) => {
       if (s.room && s.room.phase === 'lobby') {
         unwatch();
+        clearTimeout(timer);
         navigate(`/room/${s.room.code}`);
       }
     });
+    // 建房失败（口令错误等）时避免订阅泄漏
+    const timer = setTimeout(unwatch, 5000);
     send({ t: 'createRoom' });
   };
 

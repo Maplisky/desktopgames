@@ -27,12 +27,18 @@ const VARIANTS: Record<string, Array<{ value: string; label: string; hint: strin
     { value: 'peek', label: '只看', hint: '偷看身份，不公开' },
     { value: 'reveal', label: '公开', hint: '查看并公开身份' },
   ],
-  'trick-spirit-merchant': [
+};
+
+/** 灵商的操作方式动态构造（换代币可任选自己哪枚给出——面值仅自己可见） */
+function merchantButtons(myTokenCount: number): Array<{ value: string; label: string; hint: string }> {
+  const out = [
     { value: 'house', label: '看身份', hint: '查看对方身份' },
     { value: 'token', label: '看代币', hint: '偷看一枚代币面值' },
-    { value: 'swap', label: '换代币', hint: '与对方交换一枚代币' },
-  ],
-};
+  ];
+  for (let i = 0; i < myTokenCount; i++)
+    out.push({ value: `swap:${i}`, label: `换·给第 ${i + 1} 枚`, hint: '给出自己该枚，换对方随机一枚' });
+  return out;
+}
 
 interface FxFlash {
   id: number;
@@ -315,9 +321,15 @@ export default function NonTable() {
       }
       return;
     }
-    if (VARIANTS[currentCardId]) {
+    if (currentCardId === 'trick-troublemaker' || currentCardId === 'trick-spirit-merchant') {
       if (!variantChoice) return; // 先选操作方式
-      act({ type: 'non:resolve', target: seat, choice: variantChoice });
+      const [ch, gi] = variantChoice.split(':');
+      act({
+        type: 'non:resolve',
+        target: seat,
+        choice: ch,
+        ...(gi !== undefined ? { giveIdx: Number(gi) } : {}),
+      });
       return;
     }
     // 含忍者：先发窥视（服务端随后弹出杀/放抉择）
@@ -334,6 +346,13 @@ export default function NonTable() {
     return base.map((p) => p.seat);
   })();
 
+  const isVariantCard = currentCardId === 'trick-troublemaker' || currentCardId === 'trick-spirit-merchant';
+  const variantButtons = isVariantCard
+    ? currentCardId === 'trick-spirit-merchant'
+      ? merchantButtons(view.you.tokens.length)
+      : (VARIANTS[currentCardId] ?? [])
+    : [];
+
   const phaseHint = () => {
     switch (view.phase) {
       case 'draft1':
@@ -349,7 +368,7 @@ export default function NonTable() {
           if (currentCard?.shinobiStyle && locked !== null)
             return `已窥视 ${view.players.find((p) => p.seat === locked)?.nickname ?? ''} 的身份 · 选择杀或放`;
           if (currentCardId === 'trick-gravedigger') return '掘墓人：从弃牌堆拿一张';
-          if (VARIANTS[currentCardId] && !variantChoice) return `${currentCard?.name}：先选操作方式，再点目标`;
+          if (isVariantCard && !variantChoice) return `${currentCard?.name}：先选操作方式，再点目标`;
           return needsTarget ? `${currentCard?.name}：选择目标` : `${currentCard?.name} 生效中…`;
         }
         return ni?.currentSeat !== null && ni?.currentSeat !== undefined
@@ -693,10 +712,10 @@ export default function NonTable() {
         </div>
 
         {/* 变体诡术师：先选操作方式，再点目标座位 */}
-        {myTurnToResolve && VARIANTS[currentCardId] && (
+        {myTurnToResolve && isVariantCard && (
           <div className="hand-actions">
             <span className="hint">选择操作方式 →</span>
-            {VARIANTS[currentCardId].map((v) => (
+            {variantButtons.map((v) => (
               <button
                 key={v.value}
                 className={`app-btn small ${variantChoice === v.value ? 'primary' : ''}`}
