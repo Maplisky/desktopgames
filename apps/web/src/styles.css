@@ -500,7 +500,7 @@ input.app-input:focus {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 2px;
+  gap: 1px;
   padding: 8px 12px 2px;
   flex-wrap: wrap;
 }
@@ -511,6 +511,13 @@ input.app-input:focus {
   color: var(--text-dim);
   font-size: 12px;
   letter-spacing: 1px;
+}
+.track-step.is-night .step-label {
+  color: rgba(232, 197, 116, 0.55);
+}
+.track-step.is-night.active .step-label,
+.track-step.is-night.done .step-label {
+  color: inherit;
 }
 .track-step .step-dot {
   width: 18px;

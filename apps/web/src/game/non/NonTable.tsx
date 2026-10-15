@@ -13,22 +13,17 @@ import ChatPanel from '../../components/ChatPanel';
 const HOUSE_LABEL: Record<string, string> = { crane: '鹤之家', lotus: '莲之家', ronin: '浪人' };
 const HOUSE_SIGIL: Record<string, string> = { crane: '🕊️', lotus: '🪷', ronin: '⚔️' };
 
-/** 全流程阶段轨道（官方回合流程命名） */
-const PHASE_TRACK: Array<{ id: string; label: string }> = [
+/** 全流程阶段轨道（官方九步：回合流程 + 夜晚五阶段全部常驻展示） */
+const PHASE_TRACK: Array<{ id: string; label: string; night?: boolean }> = [
   { id: 'deal', label: '回合开始' },
   { id: 'draft', label: '忍者轮抽' },
-  { id: 'night', label: '忍者之夜' },
+  { id: 'n1', label: '① 间谍', night: true },
+  { id: 'n2', label: '② 通灵者', night: true },
+  { id: 'n3', label: '③ 诡术师', night: true },
+  { id: 'n4', label: '④ 盲眼刺客', night: true },
+  { id: 'n5', label: '⑤ 忍者', night: true },
   { id: 'reveal', label: '身份揭示' },
   { id: 'score', label: '回合结束' },
-];
-
-/** 夜晚五阶段（官方命名） */
-const NIGHT_SUBPHASES: Array<{ id: number; label: string }> = [
-  { id: 1, label: '① 间谍' },
-  { id: 2, label: '② 通灵者' },
-  { id: 3, label: '③ 诡术师' },
-  { id: 4, label: '④ 盲眼刺客' },
-  { id: 5, label: '⑤ 忍者' },
 ];
 
 /** 变体类诡术师的操作方式（先选方式，再点目标座位） */
@@ -304,7 +299,17 @@ export default function NonTable() {
     const t = 0.56;
     return { left: `${50 + 41 * t * Math.cos(a)}%`, top: `${44 + 33 * t * Math.sin(a)}%` };
   };
+  // 主轨道当前位置（九步）：夜晚阶段映射到 间谍(2)…忍者(6)
   const trackIdx =
+    view.phase === 'draft1' || view.phase === 'draft2'
+      ? 1
+      : view.phase === 'night'
+        ? 1 + (view.nightInfo?.phaseId ?? 1)
+        : view.phase === 'roundEnd'
+          ? 7
+          : 9;
+  // 流程卡的大步骤（五步）：draft→1, night→2, roundEnd→3
+  const houseStepIdx =
     view.phase === 'draft1' || view.phase === 'draft2' ? 1 : view.phase === 'night' ? 2 : view.phase === 'roundEnd' ? 3 : 5;
 
   const locked = view.nightInfo?.lockedTarget ?? null;
@@ -423,32 +428,21 @@ export default function NonTable() {
         </div>
       </div>
 
-      {/* 阶段轨道：官方回合流程与当前位置 */}
+      {/* 阶段轨道：官方九步全流程常驻展示（夜晚五阶段为主轨道一等步骤） */}
       <div className="phase-track">
         {PHASE_TRACK.map((p, i) => (
-          <div key={p.id} className={`track-step ${i < trackIdx ? 'done' : ''} ${i === trackIdx ? 'active' : ''}`}>
-            <span className="step-dot">{i < trackIdx ? '✓' : i + 1}</span>
+          <div
+            key={p.id}
+            className={`track-step ${i < trackIdx ? 'done' : ''} ${i === trackIdx ? 'active' : ''} ${
+              p.night ? 'is-night' : ''
+            }`}
+          >
+            <span className="step-dot">{i < trackIdx ? '✓' : i - 1}</span>
             <span className="step-label">{p.label}</span>
             {i < PHASE_TRACK.length - 1 && <span className="step-arrow">›</span>}
           </div>
         ))}
       </div>
-
-      {/* 夜晚进行中：五阶段子轨道 */}
-      {view.phase === 'night' && view.nightInfo && (
-        <div className="night-track">
-          {NIGHT_SUBPHASES.map((p) => {
-            const cur = view.nightInfo!.phaseId;
-            const done = p.id < cur;
-            const now = p.id === cur;
-            return (
-              <div key={p.id} className={`night-sub ${done ? 'done' : ''} ${now ? 'now' : ''}`}>
-                {p.label}
-              </div>
-            );
-          })}
-        </div>
-      )}
 
       <div
         className="table-stage"
@@ -851,7 +845,7 @@ export default function NonTable() {
                   收起
                 </button>
               </div>
-              <FlowCard currentStep={trackIdx - 1} currentNightPhase={view.phase === 'night' ? view.nightInfo?.phaseId ?? null : null} />
+              <FlowCard currentStep={houseStepIdx - 1} currentNightPhase={view.phase === 'night' ? view.nightInfo?.phaseId ?? null : null} />
             </motion.div>
           </motion.div>
         )}

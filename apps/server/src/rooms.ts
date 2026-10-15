@@ -202,6 +202,7 @@ export class RoomManager {
         player.connected = true;
         player.socketIds.add(sock.id);
         sock.data.sessionId = sessionId;
+        sock.data.profile = profile.data; // 重连恢复后同样回填档案，否则后续 createRoom 等会被误拒
         sock.join(this.roomKey(room.code));
         sock.emit(SOCKET_EVENT, { t: 'helloAck', sessionToken: sessionId });
         this.sendRoom(room);
