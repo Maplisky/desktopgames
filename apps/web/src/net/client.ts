@@ -34,6 +34,7 @@ export function getSocket(): Socket {
         st().pushEvents(m.rev, m.events);
         break;
       case 'error':
+        st().setLastErrorCode(m.code);
         if (m.code === 'passcode') st().setPasscodeNeeded(true);
         else st().pushToast({ text: m.message, err: true });
         break;

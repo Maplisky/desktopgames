@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { useGame } from '../store';
 import { send } from '../net/client';
 import { audio } from '../audio';
@@ -8,11 +8,18 @@ import NonTable from '../game/non/NonTable';
 
 export default function Room() {
   const { code } = useParams<{ code: string }>();
+  const navigate = useNavigate();
   const room = useGame((s) => s.room);
   const token = useGame((s) => s.token);
   const connected = useGame((s) => s.connected);
   const profile = useGame((s) => s.profile);
+  const lastErrorCode = useGame((s) => s.lastErrorCode);
   const joinedRef = useRef(false);
+
+  // 房间不存在（服务器重启/码错误）→ 回大厅
+  useEffect(() => {
+    if (!room && lastErrorCode === 'room-not-found') navigate('/', { replace: true });
+  }, [room, lastErrorCode, navigate]);
 
   // 进页面自动加入该房间（一次）；必须等 hello 完成之后再 join
   useEffect(() => {

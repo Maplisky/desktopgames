@@ -6,6 +6,7 @@ import {
   C2S_SCHEMA,
   PROFILE_SCHEMA,
   SOCKET_EVENT,
+  type C2S,
   type ChatMsg,
   type GameEvent,
   type RoomStateView,
@@ -124,6 +125,11 @@ export class RoomManager {
         sock.emit(SOCKET_EVENT, { t: 'error', code: 'bad-message', message: '消息格式错误' });
         return;
       }
+      // hello 之前到达的消息先排队（刷新时 joinRoom 可能抢跑），hello 完成后按序重放
+      if (parsed.data.t !== 'hello' && !sock.data.sessionId) {
+        sock.data.pending = [...((sock.data.pending as unknown[]) ?? []), parsed.data].slice(0, 20);
+        return;
+      }
       this.handle(sock, parsed.data).catch((e) => {
         logger.error({ err: String(e) }, 'handle failed');
         sock.emit(SOCKET_EVENT, { t: 'error', code: 'internal', message: '服务器内部错误' });
@@ -207,6 +213,16 @@ export class RoomManager {
       sock.data.sessionId = sessionId;
       sock.data.profile = profile.data;
       sock.emit(SOCKET_EVENT, { t: 'helloAck', sessionToken: sessionId });
+    }
+    // 重放 hello 之前排队的消息（保持顺序）
+    const pending = (sock.data.pending ?? []) as C2S[];
+    sock.data.pending = [];
+    if (pending.length > 0) {
+      void (async () => {
+        for (const m of pending) {
+          await this.handle(sock, m).catch(() => {});
+        }
+      })();
     }
   }
 

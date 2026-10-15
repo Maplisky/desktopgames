@@ -40,6 +40,8 @@ interface DGStore {
   lastEvents: { rev: number; events: GameEvent[] } | null;
   toasts: Toast[];
   prefs: Prefs;
+  /** 最近一次服务端错误码（用于页面导航类处理） */
+  lastErrorCode: string | null;
 
   setProfile: (p: Profile) => void;
   setToken: (t: string) => void;
@@ -52,6 +54,7 @@ interface DGStore {
   pushToast: (t: Omit<Toast, 'id'>) => void;
   dismissToast: (id: number) => void;
   setPrefs: (p: Partial<Prefs>) => void;
+  setLastErrorCode: (c: string | null) => void;
 }
 
 let toastId = 0;
@@ -67,6 +70,7 @@ export const useGame = create<DGStore>((set, get) => ({
   lastEvents: null,
   toasts: [],
   prefs: load('dg.prefs', DEFAULT_PREFS),
+  lastErrorCode: null,
 
   setProfile: (p) => {
     localStorage.setItem('dg.profile', JSON.stringify(p));
@@ -96,6 +100,7 @@ export const useGame = create<DGStore>((set, get) => ({
     setTimeout(() => get().dismissToast(id), t.identity ? 8000 : 4000);
   },
   dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((x) => x.id !== id) })),
+  setLastErrorCode: (c) => set({ lastErrorCode: c }),
   setPrefs: (p) => {
     const next = { ...get().prefs, ...p };
     localStorage.setItem('dg.prefs', JSON.stringify(next));

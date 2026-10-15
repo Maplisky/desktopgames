@@ -31,6 +31,26 @@ interface BannerState {
 
 let fxId = 0;
 
+/** 带标题的一组卡（手牌区分区） */
+function CardGroup({ label, dim, children }: { label: string; dim?: boolean; children: React.ReactNode }) {
+  return (
+    <div className={`card-group ${dim ? 'dim' : ''}`}>
+      <div className="group-label">{label}</div>
+      <div className="cards-row">{children}</div>
+    </div>
+  );
+}
+
+/** 卡 + 底部动作标签（明确的点击引导） */
+function CardWithTag({ tag, children }: { tag: string; children: React.ReactNode }) {
+  return (
+    <div className="card-with-tag">
+      {children}
+      <span className="pick-tag">{tag}</span>
+    </div>
+  );
+}
+
 export default function NonTable() {
   const room = useGame((s) => s.room);
   const view = useGame((s) => s.gameView) as NonView | null;
@@ -89,15 +109,22 @@ export default function NonTable() {
         setBanner(null);
         audio.sfx('deal');
         break;
-      case 'non:draftPicked':
+      case 'non:draftPicked': {
         audio.sfx('card');
+        const my = useGame.getState().gameView?.you.seat;
+        if (Number(p.seat) === my) pushToast({ text: '已保留 1 张 ✓ 等待其他忍者选牌' });
         break;
+      }
       case 'non:poolPassed':
         audio.sfx('deal');
+        pushToast({ text: '余牌已左传 · 你收到了右家的新候选牌' });
         break;
-      case 'non:committed':
+      case 'non:committed': {
         audio.sfx('flip');
+        const my = useGame.getState().gameView?.you.seat;
+        if (Number(p.seat) === my) pushToast({ text: '已暗选打出 ✓ 夜晚即将降临' });
         break;
+      }
       case 'non:resolving':
         audio.sfx('reveal');
         break;
@@ -447,42 +474,103 @@ export default function NonTable() {
         )}
       </div>
 
-      {/* 我的手牌/候选区 */}
+      {/* 我的手牌/候选区：分区标注，手牌状态一目了然 */}
       <div className="my-hand">
-        <span className={`identity-badge ${view.you.identity.house}`} style={{ position: 'absolute', left: 18, bottom: 16 }}>
-          我的身份 · {HOUSE_LABEL[view.you.identity.house]}
-          {view.you.identity.house !== 'ronin' && ` 第${view.you.identity.rank}席`}
-        </span>
-        {(view.phase === 'draft1' || view.phase === 'draft2') && !view.you.picked && (
-          <div className="cards-row">
-            {view.you.draftPool.map((c) => (
-              <NinjaCard key={c} cardId={c} clickable width={92} onClick={() => act({ type: 'non:draftPick', cardId: c })} />
-            ))}
-          </div>
-        )}
-        {view.phase === 'commit' && !view.you.committed && (
-          <div className="cards-row">
-            {view.you.hand.map((c) => (
-              <NinjaCard key={c} cardId={c} clickable width={100} onClick={() => act({ type: 'non:commit', cardId: c })} />
-            ))}
-          </div>
-        )}
-        {view.phase === 'night' && view.you.committed && (
-          <div className="cards-row" style={{ opacity: 0.85 }}>
-            <NinjaCard cardId={view.you.committed} width={84} selected={view.nightInfo?.currentSeat === mySeat} />
-            {view.you.hand
-              .filter((c) => c !== view.you.committed)
-              .map((c) => (
-                <NinjaCard key={c} cardId={c} width={84} />
+        <div className="hand-meta">
+          <span className={`identity-badge ${view.you.identity.house}`}>
+            我的身份 · {HOUSE_LABEL[view.you.identity.house]}
+            {view.you.identity.house !== 'ronin' && ` 第${view.you.identity.rank}席`}
+          </span>
+          <span className="hand-pill">{phaseHint()}</span>
+        </div>
+
+        <div className="hand-groups">
+          {/* 轮抽：已保留的牌常驻可见 */}
+          {view.phase === 'draft1' || view.phase === 'draft2' ? (
+            <>
+              {view.you.hand.length > 0 && (
+                <CardGroup label={`✋ 已保留 ${view.you.hand.length} 张`}>
+                  {view.you.hand.map((c) => (
+                    <NinjaCard key={c} cardId={c} width={64} />
+                  ))}
+                </CardGroup>
+              )}
+              {!view.you.picked ? (
+                <CardGroup
+                  label={`🎴 候选牌（第 ${view.draft?.pickNumber ?? 1} 抓）· 点击选 1 张 · 其他玩家 ${
+                    view.draft?.doneCount ?? 0
+                  }/${view.draft?.total ?? n} 已选`}
+                >
+                  {view.you.draftPool.map((c) => (
+                    <CardWithTag key={c} tag="选这张">
+                      <NinjaCard
+                        cardId={c}
+                        clickable
+                        width={96}
+                        onClick={() => act({ type: 'non:draftPick', cardId: c })}
+                      />
+                    </CardWithTag>
+                  ))}
+                </CardGroup>
+              ) : (
+                <CardGroup label="✓ 本轮已选好，等待其他忍者">
+                  <span className="waiting-dots" />
+                </CardGroup>
+              )}
+            </>
+          ) : null}
+
+          {/* 暗选：明确哪张打出、哪张留作暗牌 */}
+          {view.phase === 'commit' && !view.you.committed && (
+            <CardGroup label="🀄 手牌 · 点击打出 1 张（另一张留作暗牌）">
+              {view.you.hand.map((c) => (
+                <CardWithTag key={c} tag="打出">
+                  <NinjaCard
+                    cardId={c}
+                    clickable
+                    width={100}
+                    onClick={() => act({ type: 'non:commit', cardId: c })}
+                  />
+                </CardWithTag>
               ))}
-          </div>
-        )}
-        {(view.phase === 'roundEnd' || view.phase === 'gameEnd' || view.you.picked || view.you.committed) &&
-          !(
-            (view.phase === 'draft1' || view.phase === 'draft2') && !view.you.picked
-          ) &&
-          !(view.phase === 'commit' && !view.you.committed) &&
-          !(view.phase === 'night' && view.you.committed) && <span className="hint">{phaseHint()}</span>}
+            </CardGroup>
+          )}
+          {view.phase === 'commit' && view.you.committed && (
+            <>
+              <CardGroup label="✅ 已打出（暗置）">
+                <NinjaCard cardId={view.you.committed} width={72} />
+              </CardGroup>
+              <CardGroup label="🕶️ 暗牌（仍在你手中，会被通灵者看穿）" dim>
+                {view.you.hand
+                  .filter((c) => c !== view.you.committed)
+                  .map((c) => (
+                    <NinjaCard key={c} cardId={c} width={64} />
+                  ))}
+              </CardGroup>
+            </>
+          )}
+
+          {/* 夜晚/结算：打出的牌与暗牌分开标注 */}
+          {(view.phase === 'night' || view.phase === 'roundEnd' || view.phase === 'gameEnd') &&
+            view.you.committed && (
+              <>
+                <CardGroup label={view.nightInfo?.currentSeat === mySeat ? '⚡ 正在结算你的牌' : '🗡️ 你打出的牌'}>
+                  <NinjaCard
+                    cardId={view.you.committed}
+                    width={76}
+                    selected={view.nightInfo?.currentSeat === mySeat}
+                  />
+                </CardGroup>
+                <CardGroup label="🕶️ 暗牌（未打出）" dim>
+                  {view.you.hand
+                    .filter((c) => c !== view.you.committed)
+                    .map((c) => (
+                      <NinjaCard key={c} cardId={c} width={64} />
+                    ))}
+                </CardGroup>
+              </>
+            )}
+        </div>
 
         {/* 忍者（先看后选）：杀/放 */}
         {targetMode?.card === 'shinobi' && (

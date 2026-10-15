@@ -677,9 +677,14 @@ input.app-input:focus {
 }
 .card3d.clickable {
   cursor: pointer;
+  animation: cardGlow 1.6s ease-in-out infinite;
 }
 .card3d.clickable .face {
   box-shadow: 0 0 14px rgba(232, 197, 116, 0.55);
+}
+@keyframes cardGlow {
+  0%, 100% { filter: drop-shadow(0 0 4px rgba(232, 197, 116, 0.3)); }
+  50% { filter: drop-shadow(0 0 16px rgba(232, 197, 116, 0.8)); }
 }
 .card3d.selected .face {
   outline: 3px solid var(--gold);
@@ -711,13 +716,13 @@ input.app-input:focus {
   background: rgba(184, 160, 106, 0.1);
 }
 
-/* 我的手牌区 */
+/* 我的手牌区：分区标注布局 */
 .my-hand {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 14px;
-  padding: 10px 16px 16px;
+  gap: 8px;
+  padding: 10px 16px 14px;
   min-height: 150px;
   position: relative;
   z-index: 20;
@@ -726,15 +731,73 @@ input.app-input:focus {
   color: var(--text-dim);
   font-size: 14px;
 }
-.my-hand .cards-row {
+.hand-meta {
   display: flex;
-  gap: 12px;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.hand-pill {
+  font-size: 13px;
+  color: var(--gold);
+  background: rgba(232, 197, 116, 0.08);
+  border: 1px solid var(--gold-dim);
+  border-radius: 999px;
+  padding: 3px 14px;
+}
+.hand-groups {
+  display: flex;
+  align-items: flex-end;
+  gap: 28px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.card-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.card-group.dim {
+  opacity: 0.6;
+}
+.card-group .group-label {
+  font-size: 12px;
+  color: var(--text-dim);
+  letter-spacing: 1px;
+  white-space: nowrap;
+}
+.card-group .cards-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.card-with-tag {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.card-with-tag .pick-tag {
+  font-size: 12px;
+  padding: 2px 12px;
+  border-radius: 999px;
+  background: rgba(232, 197, 116, 0.15);
+  border: 1px solid var(--gold-dim);
+  color: var(--gold);
+  cursor: pointer;
+}
+.waiting-dots::after {
+  content: '· · ·';
+  letter-spacing: 4px;
+  color: var(--text-dim);
 }
 .hand-actions {
   display: flex;
   gap: 10px;
-  margin-left: 18px;
   flex-wrap: wrap;
+  justify-content: center;
 }
 
 /* ============ 特效层 ============ */
