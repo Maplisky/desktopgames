@@ -544,6 +544,183 @@ input.app-input:focus {
   opacity: 0.5;
 }
 
+/* 夜晚五阶段子轨道 */
+.night-track {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 2px 12px 6px;
+  flex-wrap: wrap;
+}
+.night-sub {
+  font-size: 12px;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--panel-border);
+}
+.night-sub.done {
+  color: var(--ok);
+  border-color: rgba(111, 211, 160, 0.4);
+}
+.night-sub.now {
+  color: var(--gold);
+  border-color: var(--gold);
+  background: rgba(232, 197, 116, 0.12);
+  box-shadow: 0 0 10px rgba(232, 197, 116, 0.35);
+  font-weight: 700;
+}
+
+/* 官方回合流程卡 */
+.flow-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(5, 4, 15, 0.55);
+  backdrop-filter: blur(2px);
+  z-index: 90;
+  display: flex;
+  justify-content: flex-end;
+}
+.flow-panel {
+  width: min(480px, 94vw);
+  margin: 12px;
+  padding: 0;
+  overflow-y: auto;
+  max-height: calc(100vh - 24px);
+  display: flex;
+  flex-direction: column;
+}
+.flow-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--panel-border);
+  color: var(--gold);
+  font-family: var(--font-display);
+  letter-spacing: 2px;
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  backdrop-filter: blur(6px);
+  z-index: 1;
+}
+.flow-card {
+  padding: 14px 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.flow-title {
+  font-family: var(--font-display);
+  font-size: 20px;
+  color: var(--gold);
+  letter-spacing: 4px;
+  text-align: center;
+  padding: 4px 0 2px;
+}
+.flow-step {
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.025);
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+.flow-step.now {
+  border-color: var(--gold);
+  box-shadow: 0 0 14px rgba(232, 197, 116, 0.25);
+  background: rgba(232, 197, 116, 0.06);
+}
+.flow-step-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.flow-num {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1.5px solid var(--gold);
+  color: var(--gold);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 800;
+  flex: none;
+}
+.flow-label {
+  font-family: var(--font-display);
+  font-size: 16px;
+  color: var(--text);
+  letter-spacing: 2px;
+}
+.flow-now-tag {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--gold);
+  border: 1px solid var(--gold-dim);
+  border-radius: 999px;
+  padding: 1px 8px;
+  animation: pulse 1.4s ease-in-out infinite;
+}
+.flow-desc {
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--text-dim);
+}
+.flow-subphases {
+  margin-top: 8px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.flow-sub {
+  font-size: 12px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--panel-border);
+  color: var(--text-dim);
+}
+.flow-sub.done {
+  color: var(--ok);
+  border-color: rgba(111, 211, 160, 0.4);
+}
+.flow-sub.now {
+  color: var(--gold);
+  border-color: var(--gold);
+  font-weight: 700;
+  background: rgba(232, 197, 116, 0.1);
+}
+.flow-extra {
+  border-top: 1px dashed var(--panel-border);
+  margin-top: 4px;
+  padding-top: 10px;
+}
+.flow-extra-title {
+  font-size: 13px;
+  color: var(--gold);
+  letter-spacing: 2px;
+  margin-bottom: 6px;
+  font-family: var(--font-display);
+}
+.flow-extra-row {
+  display: flex;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text-dim);
+  padding: 3px 0;
+  line-height: 1.5;
+}
+.flow-extra-row b {
+  color: var(--text);
+  flex: none;
+  width: 56px;
+}
+
 /* 公共区出牌（中央卡环） */
 .center-card {
   position: absolute;

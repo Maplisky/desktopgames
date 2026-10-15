@@ -7,18 +7,28 @@ import { useGame } from '../../store';
 import { send } from '../../net/client';
 import { audio } from '../../audio';
 import { NinjaCard } from '../../components/NinjaCard';
+import FlowCard from '../../components/FlowCard';
 import ChatPanel from '../../components/ChatPanel';
 
 const HOUSE_LABEL: Record<string, string> = { crane: '鹤之家', lotus: '莲之家', ronin: '浪人' };
 const HOUSE_SIGIL: Record<string, string> = { crane: '🕊️', lotus: '🪷', ronin: '⚔️' };
 
-/** 全流程阶段轨道（模拟实体桌游的回合流程板） */
+/** 全流程阶段轨道（官方回合流程命名） */
 const PHASE_TRACK: Array<{ id: string; label: string }> = [
-  { id: 'deal', label: '身份分发' },
-  { id: 'draft1', label: '轮抽 · 壹' },
-  { id: 'draft2', label: '轮抽 · 贰' },
+  { id: 'deal', label: '回合开始' },
+  { id: 'draft', label: '忍者轮抽' },
   { id: 'night', label: '忍者之夜' },
-  { id: 'roundEnd', label: '回合结算' },
+  { id: 'reveal', label: '身份揭示' },
+  { id: 'score', label: '回合结束' },
+];
+
+/** 夜晚五阶段（官方命名） */
+const NIGHT_SUBPHASES: Array<{ id: number; label: string }> = [
+  { id: 1, label: '① 间谍' },
+  { id: 2, label: '② 通灵者' },
+  { id: 3, label: '③ 诡术师' },
+  { id: 4, label: '④ 盲眼刺客' },
+  { id: 5, label: '⑤ 忍者' },
 ];
 
 /** 变体类诡术师的操作方式（先选方式，再点目标座位） */
@@ -101,6 +111,7 @@ export default function NonTable() {
   const [banner, setBanner] = useState<BannerState | null>(null);
   const [targetMode, setTargetMode] = useState<{ card: string; first?: number } | null>(null);
   const [variantChoice, setVariantChoice] = useState<string | null>(null);
+  const [showFlow, setShowFlow] = useState(false);
 
   const me = room?.players.find((p) => p.sessionId === token);
 
@@ -294,7 +305,7 @@ export default function NonTable() {
     return { left: `${50 + 41 * t * Math.cos(a)}%`, top: `${44 + 33 * t * Math.sin(a)}%` };
   };
   const trackIdx =
-    view.phase === 'draft1' ? 1 : view.phase === 'draft2' ? 2 : view.phase === 'night' ? 3 : view.phase === 'roundEnd' ? 4 : 5;
+    view.phase === 'draft1' || view.phase === 'draft2' ? 1 : view.phase === 'night' ? 2 : view.phase === 'roundEnd' ? 3 : 5;
 
   const locked = view.nightInfo?.lockedTarget ?? null;
   const myTurnToResolve = view.phase === 'night' && view.nightInfo?.currentSeat === mySeat;
@@ -402,10 +413,17 @@ export default function NonTable() {
               {me.avatar} {me.nickname}
             </span>
           )}
+          <button
+            className={`app-btn small ${showFlow ? 'primary' : ''}`}
+            onClick={() => setShowFlow((v) => !v)}
+            title="查看官方回合流程卡"
+          >
+            📋 流程卡
+          </button>
         </div>
       </div>
 
-      {/* 阶段轨道：全流程轮名称与当前位置（模拟实体流程板） */}
+      {/* 阶段轨道：官方回合流程与当前位置 */}
       <div className="phase-track">
         {PHASE_TRACK.map((p, i) => (
           <div key={p.id} className={`track-step ${i < trackIdx ? 'done' : ''} ${i === trackIdx ? 'active' : ''}`}>
@@ -415,6 +433,22 @@ export default function NonTable() {
           </div>
         ))}
       </div>
+
+      {/* 夜晚进行中：五阶段子轨道 */}
+      {view.phase === 'night' && view.nightInfo && (
+        <div className="night-track">
+          {NIGHT_SUBPHASES.map((p) => {
+            const cur = view.nightInfo!.phaseId;
+            const done = p.id < cur;
+            const now = p.id === cur;
+            return (
+              <div key={p.id} className={`night-sub ${done ? 'done' : ''} ${now ? 'now' : ''}`}>
+                {p.label}
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       <div
         className="table-stage"
@@ -792,6 +826,36 @@ export default function NonTable() {
       <div style={{ position: 'absolute', right: 12, top: 46, bottom: 160, width: 250, zIndex: 25 }}>
         <ChatPanel />
       </div>
+
+      {/* 官方回合流程卡（可开合） */}
+      <AnimatePresence>
+        {showFlow && (
+          <motion.div
+            className="flow-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setShowFlow(false)}
+          >
+            <motion.div
+              className="panel flow-panel"
+              initial={{ x: 40, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: 40, opacity: 0 }}
+              transition={{ type: 'spring', stiffness: 320, damping: 30 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flow-panel-head">
+                <span>官方回合流程卡</span>
+                <button className="app-btn small" onClick={() => setShowFlow(false)}>
+                  收起
+                </button>
+              </div>
+              <FlowCard currentStep={trackIdx - 1} currentNightPhase={view.phase === 'night' ? view.nightInfo?.phaseId ?? null : null} />
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {vignette > 0 && (
         <motion.div
