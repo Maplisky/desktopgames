@@ -86,7 +86,13 @@ export const S2C_SCHEMA = z.discriminatedUnion('t', [
   z.object({ t: z.literal('room'), room: ROOM_STATE_SCHEMA }),
   z.object({ t: z.literal('left'), reason: z.string() }),
   z.object({ t: z.literal('gameEvents'), rev: z.number().int(), events: z.array(z.custom<GameEvent>()) }),
-  z.object({ t: z.literal('gameSync'), rev: z.number().int(), view: z.unknown() }),
+  z.object({
+    t: z.literal('gameSync'),
+    rev: z.number().int(),
+    view: z.unknown(),
+    /** 服务端已接受的该玩家最大动作 seq（断线重连后客户端据此对齐计数器） */
+    lastSeq: z.number().int().optional(),
+  }),
 ]);
 export type S2C = z.infer<typeof S2C_SCHEMA>;
 

@@ -241,7 +241,7 @@ export interface GameDefinition<S extends object, A> {
 |---|---|---|---|
 | 身份分发 | `players[].house/rank/leader` | —（setup） | `non:dealIdentity`（定向：只发本人） |
 | 轮抽 | `draftPiles[]`、`hands[]` | `non:draftPick` | `non:cardTaken`、`non:pilePassed`（发牌飞行动画） |
-| 夜晚选牌 | `playedCard` | `non:playCard{card, target?}` | `non:cardCommitted`（卡背滑入中央） |
+| 夜晚（逐阶段叫名） | `night`（窗口/队列/待反应状态机） | `non:phasePlay{card}` / `non:phasePass` / `non:react{card}` / `non:noReact` | `non:phaseCall`（阶段叫名）、`non:played`（亮牌）、`non:killPending`（手里剑飞行+震屏）、`non:peek`（定向）、`non:death`（灰化） |
 | 依次结算 | `turnOrder/turnIdx` | —（服务端驱动） | `non:cardRevealed`、`non:assassinate`（手里剑飞行+震屏）、`non:peek`（定向）、`non:death`（卡牌灰化+家徽显现） |
 | 回合结算 | `honorScores` | — | `non:houseReveal`（全桌翻牌瀑布）、`non:roundWinner`（家纹绽放粒子） |
 

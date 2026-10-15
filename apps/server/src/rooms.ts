@@ -563,10 +563,17 @@ export class RoomManager {
       return;
     }
     const pi = def.phaseInfo(room.game.state);
-    // 夜晚阶段每个结算者的抉择需要独立计时（否则第一人超时后后续永不超时）
+    // 夜晚按状态子阶段独立计时（窗口/结算/待反应），断线玩家不再卡死整局
+    const ng = room.game.state.night;
     const token =
-      pi.id === 'night' && room.game.state.night?.current
-        ? `${room.game.state.round}:night:${room.game.state.night.current.seat}:${room.game.state.night.current.card}`
+      pi.id === 'night' && ng
+        ? `${room.game.state.round}:night:${ng.phaseIdx}:${
+            ng.pendingKill
+              ? `k${ng.pendingKill.target}`
+              : ng.current
+                ? `r${ng.current.seat}:${ng.current.card}`
+                : `w${ng.window?.phase}`
+          }`
         : `${room.game.state.round}:${pi.id}`;
     this.updatePhaseTimer(room, token, pi.timerMs, pi.activeSeats.length > 0);
     this.sendAllGameSync(room);
@@ -696,7 +703,7 @@ export class RoomManager {
       if (p.isBot || p.socketIds.size === 0) continue;
       const view = def.clientView(room.game.state, p.seat);
       for (const sid of p.socketIds) {
-        this.io.to(sid).emit(SOCKET_EVENT, { t: 'gameSync', rev: room.game.rev, view });
+        this.io.to(sid).emit(SOCKET_EVENT, { t: 'gameSync', rev: room.game.rev, view, lastSeq: p.lastSeq });
       }
     }
   }
@@ -706,7 +713,7 @@ export class RoomManager {
     const def = GAMES[room.game.gameId];
     const view = def.clientView(room.game.state, player.seat);
     for (const sid of player.socketIds) {
-      this.io.to(sid).emit(SOCKET_EVENT, { t: 'gameSync', rev: room.game.rev, view });
+      this.io.to(sid).emit(SOCKET_EVENT, { t: 'gameSync', rev: room.game.rev, view, lastSeq: player.lastSeq });
     }
   }
 

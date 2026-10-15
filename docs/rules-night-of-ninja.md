@@ -1,15 +1,27 @@
 # 忍者之夜 · 规则实现核对文档
 
 本文档记录 `packages/games/night-of-ninja` 裁判的规则依据与核对状态。
-主要来源：**RulesPal 完整规则书文本**（rulespal.com/night-of-the-ninja/rulebook）、官方 2 人规则页（brotherwisegames.com）、Zatu how-to-play、One Board Family / BoardGameReview 评测交叉确认。
+主要来源：**RulesPal 完整规则书文本**（rulespal.com/night-of-the-ninja/rulebook）、Zatu how-to-play、官方 2 人规则页（brotherwisegames.com）、One Board Family / BoardGameReview 评测——**多源交叉验证**。
 
-## ✅ 已按规则书实现（2026-10-15 大修后）
+## 🔴 重大修正（2026-10-15 第二次全面核对）
+
+**夜晚流程**：最初实现误读为「全员同时暗选 → 依次翻开」。经 Zatu（"phases are called one by one"、"play it face up in front of you"、"Once everyone has done this"）、RulesPal（"If nobody reveals in a phase, skip it. Skipped cards cannot be played later that round"）与评测（"players can choose not to play a ninja card to try and bluff"）三源交叉确证，真实规则为：
+
+- 夜晚**逐类型阶段叫名**（间谍 → 通灵 → 诡术 → 盲眼刺客 → 忍者）；
+- 每个阶段，持有该类型牌的玩家**决定是否打出**：打出立即面朝上公开；不打出则该牌本夜作废；
+- 全部决定后，已打出的牌**按角标数字升序**结算（同角标按座位）；
+- 通灵者看的是目标**手牌**（打出的牌本就公开）；
+- 镜僧/殉道者是**从手牌打出的反应牌**（被刺杀宣告时立即抉择）；主谋是计分时从手牌揭示的持牌。
+
+已按此重构（`non:phasePlay` / `non:phasePass` / `non:react` / `non:noReact` 动作，夜晚状态机 = 窗口/结算队列/待反应三态）。
+
+## ✅ 已按规则书实现（多源交叉验证后）
 
 | 规则点 | 实现要点 |
 |---|---|
 | 人数与身份 | 4–11 人核心（本实现放宽至 3 人）；鹤/莲按人数取排名 1..k（1 最优），奇数人数加浪人；**每轮重发** |
 | 轮抽 | 摸 3 选 1 → 余 2 左传 → 再选 1 → **最后 1 张弃到桌面中央**（进入弃牌堆） |
-| 暗选 | 手中暗选 1 张扣置；另一张留手（通灵者可见的是**打出的那张**） |
+| 夜晚 | 逐类型阶段叫名，从手牌决定打出（立即公开）或保留（作废）；窗口关闭后按角标升序结算；被杀者未结算的牌作废；唯一存活者打出的刺杀牌无目标自动跳过 |
 | 夜晚结算顺序 | 类型阶段：间谍→通灵→诡术→盲眼刺客→忍者；**同类型内按卡面角标数字升序**，再按座位 |
 | 十三种卡 | 间谍/通灵者/盲眼刺客/忍者（各 6 张，角标 1-6）；六张诡术师：易容师、掘墓人、搅局者、灵商、盗贼、审判官；序外：镜僧、殉道者、主谋 |
 | 易容师 | 查看两人身份并**秘密交换**（仅行动者收到定向事件；受害者 identityKnown=false，界面显示「身份不明」） |

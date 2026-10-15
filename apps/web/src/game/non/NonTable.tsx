@@ -17,7 +17,6 @@ const PHASE_TRACK: Array<{ id: string; label: string }> = [
   { id: 'deal', label: '身份分发' },
   { id: 'draft1', label: '轮抽 · 壹' },
   { id: 'draft2', label: '轮抽 · 贰' },
-  { id: 'commit', label: '暗选出牌' },
   { id: 'night', label: '忍者之夜' },
   { id: 'roundEnd', label: '回合结算' },
 ];
@@ -79,8 +78,15 @@ export default function NonTable() {
   const view = useGame((s) => s.gameView) as NonView | null;
   const lastEvents = useGame((s) => s.lastEvents);
   const token = useGame((s) => s.token);
+  const lastServerSeq = useGame((s) => s.lastServerSeq);
   const pushToast = useGame((s) => s.pushToast);
   const seq = useRef(0);
+
+  // 断线重连/刷新后：以服务端已接受的最大 seq 对齐，避免新动作被幂等去重丢弃
+  useEffect(() => {
+    if (lastServerSeq >= seq.current) seq.current = lastServerSeq + 1;
+  }, [lastServerSeq]);
+
   const lastRev = useRef(0);
   const stageRef = useRef<HTMLDivElement>(null);
   const [flashes, setFlashes] = useState<FxFlash[]>([]);
@@ -150,17 +156,25 @@ export default function NonTable() {
         audio.sfx('deal');
         pushToast({ text: '余牌已左传 · 你收到了右家的新候选牌' });
         break;
-      case 'non:committed': {
+      case 'non:phaseCall':
+        audio.sfx('reveal');
+        if (view?.nightInfo?.myWindowPending || true) {
+          pushToast({ text: `🕯️ ${String(p.label)} —— 持有该牌的忍者请决定是否打出` });
+        }
+        break;
+      case 'non:played': {
         audio.sfx('flip');
-        const my = useGame.getState().gameView?.you.seat;
-        if (Number(p.seat) === my) pushToast({ text: '已暗选打出 ✓ 夜晚即将降临' });
+        const who = view?.players.find((x) => x.seat === Number(p.seat));
+        pushToast({
+          text: `${who?.nickname ?? String(p.seat) + ' 号位'} 亮出了 ${CARDS[String(p.cardId)]?.name ?? String(p.cardId)}`,
+        });
         break;
       }
+      case 'non:killPending':
+        fly(Number(p.attacker), Number(p.target));
+        break;
       case 'non:resolving':
         audio.sfx('reveal');
-        break;
-      case 'non:killAttempt':
-        fly(Number(p.attacker), Number(p.target));
         break;
       case 'non:death':
         flash(Number(p.seat), 'rgba(255,60,40,0.6)');
@@ -169,10 +183,6 @@ export default function NonTable() {
         break;
       case 'non:reflected':
         audio.sfx('reflect');
-        break;
-      case 'non:blocked':
-        flash(Number(p.seat), 'rgba(90,167,214,0.6)');
-        audio.sfx('shield');
         break;
       case 'non:spared':
         audio.sfx('spare');
@@ -241,12 +251,6 @@ export default function NonTable() {
         setBanner(null);
         audio.sfx('win');
         break;
-      case 'non:silenced':
-        audio.sfx('shield');
-        break;
-      case 'non:identitySwap':
-        audio.sfx('flip');
-        break;
       default:
         break;
     }
@@ -284,22 +288,16 @@ export default function NonTable() {
     return { left: `${50 + 41 * t * Math.cos(a)}%`, top: `${44 + 33 * t * Math.sin(a)}%` };
   };
   const trackIdx =
-    view.phase === 'draft1'
-      ? 1
-      : view.phase === 'draft2'
-        ? 2
-        : view.phase === 'commit'
-          ? 3
-          : view.phase === 'night'
-            ? 4
-            : view.phase === 'roundEnd'
-              ? 5
-              : 6;
+    view.phase === 'draft1' ? 1 : view.phase === 'draft2' ? 2 : view.phase === 'night' ? 3 : view.phase === 'roundEnd' ? 4 : 5;
 
   const locked = view.nightInfo?.lockedTarget ?? null;
   const myTurnToResolve = view.phase === 'night' && view.nightInfo?.currentSeat === mySeat;
   const currentCard = view.nightInfo?.currentCardId ? CARDS[view.nightInfo.currentCardId] : null;
   const currentCardId = view.nightInfo?.currentCardId ?? '';
+  const killPendingForMe = view.nightInfo?.killPending && view.nightInfo.killPending.target === mySeat;
+  const myWindowPending = !!view.nightInfo?.myWindowPending;
+  const windowPhase = view.nightInfo?.phaseId ?? 0;
+  const myMatchingCards = myWindowPending ? view.you.hand.filter((c) => CARDS[c.split('#')[0]]?.phase === windowPhase) : [];
   const needsTarget =
     myTurnToResolve &&
     !!currentCard &&
@@ -341,19 +339,23 @@ export default function NonTable() {
       case 'draft1':
       case 'draft2':
         return view.you.picked ? '已选好，等其他忍者…' : `选 1 张保留（第 ${view.draft?.pickNumber} 抓）`;
-      case 'commit':
-        return view.you.committed ? '已暗选，等其他忍者…' : '从手中暗选 1 张打出';
-      case 'night':
-        if (view.nightInfo?.currentSeat === mySeat) {
+      case 'night': {
+        const ni = view.nightInfo;
+        if (ni?.killPending) {
+          return ni.killPending.target === mySeat ? '你被刺杀了！打出镜僧/殉道者或承受' : '刺杀宣告中…';
+        }
+        if (ni?.myWindowPending) return `🕯️ ${ni.phaseLabel}：是否打出？（不打出则此牌作废）`;
+        if (ni?.currentSeat === mySeat) {
           if (currentCard?.shinobiStyle && locked !== null)
             return `已窥视 ${view.players.find((p) => p.seat === locked)?.nickname ?? ''} 的身份 · 选择杀或放`;
           if (currentCardId === 'trick-gravedigger') return '掘墓人：从弃牌堆拿一张';
           if (VARIANTS[currentCardId] && !variantChoice) return `${currentCard?.name}：先选操作方式，再点目标`;
           return needsTarget ? `${currentCard?.name}：选择目标` : `${currentCard?.name} 生效中…`;
         }
-        return view.nightInfo?.currentSeat !== null && view.nightInfo?.currentSeat !== undefined
-          ? `${view.players.find((p) => p.seat === view.nightInfo!.currentSeat)?.nickname} 正在行动…`
+        return ni?.currentSeat !== null && ni?.currentSeat !== undefined
+          ? `${view.players.find((p) => p.seat === ni.currentSeat)?.nickname} 正在行动…`
           : '夜风掠过…';
+      }
       case 'roundEnd':
         return '回合结算中…';
       default:
@@ -402,21 +404,12 @@ export default function NonTable() {
       >
         <div className="table-felt" />
 
-        {/* 公共区：所有已打出的牌（暗置环绕中央，结算到谁则翻谁的） */}
+        {/* 公共区：亮出的牌面朝上环绕中央（打出即公开） */}
         {view.players.map((p) =>
-          p.hasCommitted || p.resolvedCard ? (
+          p.played.length > 0 ? (
             <div key={`cc-${p.seat}`} className={`center-card ${!p.alive ? 'dead' : ''}`} style={centerCardPos(p.seat)}>
-              <NinjaCard
-                cardId={p.resolvedCard ?? 'spy'}
-                faceDown={!p.resolvedCard}
-                width={54}
-                title={
-                  p.resolvedCard
-                    ? undefined
-                    : `${p.seat === mySeat ? '你' : p.nickname} 打出的牌（结算到时翻开）`
-                }
-              />
-              {p.negated && <span className="cc-negated">封</span>}
+              <NinjaCard cardId={p.played[p.played.length - 1]} width={54} />
+              {p.played.length > 1 && <span className="cc-count">×{p.played.length}</span>}
               <span className="cc-owner">{p.seat === mySeat ? '我' : p.nickname}</span>
             </div>
           ) : null,
@@ -430,7 +423,7 @@ export default function NonTable() {
             >
               <NinjaCard
                 cardId={
-                  view.players.find((p) => p.seat === view.nightInfo!.currentSeat)?.resolvedCard ??
+                  view.players.find((p) => p.seat === view.nightInfo!.currentSeat)?.played.slice(-1)[0] ??
                   view.nightInfo!.currentCardId!
                 }
                 width={118}
@@ -451,9 +444,7 @@ export default function NonTable() {
               )}
             </motion.div>
           )}
-          {(view.phase === 'draft1' || view.phase === 'draft2' || view.phase === 'commit') && (
-            <div style={{ fontSize: 54, opacity: 0.85 }}>🈶</div>
-          )}
+          {(view.phase === 'draft1' || view.phase === 'draft2') && <div style={{ fontSize: 54, opacity: 0.85 }}>🌙</div>}
           <div className="phase-hint">{phaseHint()}</div>
         </div>
 
@@ -480,10 +471,7 @@ export default function NonTable() {
                 {seatPlayer && !seatPlayer.connected && !p.isBot ? ' ·掉线' : ''}
               </div>
               <div className="tags">
-                {p.negated && <span title="被封印">❌</span>}
-                {p.tokenCount > 0 && (
-                  <span title={`持有 ${p.tokenCount} 枚荣誉代币`}>🏵️{p.tokenCount}</span>
-                )}
+                {p.tokenCount > 0 && <span title={`持有 ${p.tokenCount} 枚荣誉代币`}>🏵️{p.tokenCount}</span>}
                 {shownId && (
                   <span className={`identity-badge ${shownId.house}`}>
                     {shownId.house === 'ronin' ? '浪人' : `第${shownId.rank}席`}
@@ -492,7 +480,7 @@ export default function NonTable() {
               </div>
               <div className="mini-cards">
                 {p.seat !== mySeat &&
-                  Array.from({ length: Math.max(0, p.handCount - (p.hasCommitted ? 1 : 0)) }).map((_, i) => (
+                  Array.from({ length: Math.max(0, p.handCount) }).map((_, i) => (
                     <div
                       key={i}
                       style={{
@@ -647,55 +635,60 @@ export default function NonTable() {
             </>
           ) : null}
 
-          {/* 暗选：明确哪张打出、哪张留作暗牌 */}
-          {view.phase === 'commit' && !view.you.committed && (
-            <CardGroup label="🀄 手牌 · 点击打出 1 张（另一张留作暗牌）">
-              {view.you.hand.map((c) => (
-                <CardWithTag key={c} tag="打出">
-                  <NinjaCard
-                    cardId={c}
-                    clickable
-                    width={100}
-                    onClick={() => act({ type: 'non:commit', cardId: c })}
-                  />
-                </CardWithTag>
-              ))}
+          {/* 夜晚：阶段窗口（打出/保留）、待反应、或旁观 */}
+          {view.phase === 'night' && killPendingForMe && (
+            <CardGroup label="🗡️ 你被刺杀了！点击打出反应牌，或选择承受">
+              {view.you.hand
+                .filter((c) => ['mirror-monk', 'martyr'].includes(c.split('#')[0]))
+                .map((c) => (
+                  <CardWithTag key={c} tag={c.split('#')[0] === 'mirror-monk' ? '反弹' : '得币存活'}>
+                    <NinjaCard cardId={c} clickable width={92} onClick={() => act({ type: 'non:react', cardId: c })} />
+                  </CardWithTag>
+                ))}
+              <div className="hand-actions">
+                <button className="app-btn danger" onClick={() => act({ type: 'non:noReact' })}>
+                  承受死亡
+                </button>
+              </div>
             </CardGroup>
           )}
-          {view.phase === 'commit' && view.you.committed && (
+          {view.phase === 'night' && myWindowPending && (
             <>
-              <CardGroup label="✅ 已打出（暗置）">
-                <NinjaCard cardId={view.you.committed} width={72} />
+              <CardGroup label={`🕯️ ${view.nightInfo?.phaseLabel} · 点击打出（打出即公开，不打出则此牌作废）`}>
+                {myMatchingCards.map((c) => (
+                  <CardWithTag key={c} tag="打出">
+                    <NinjaCard cardId={c} clickable width={96} onClick={() => act({ type: 'non:phasePlay', cardId: c })} />
+                  </CardWithTag>
+                ))}
               </CardGroup>
-              <CardGroup label="🕶️ 暗牌（仍在你手中，会被通灵者看穿）" dim>
-                {view.you.hand
-                  .filter((c) => c !== view.you.committed)
-                  .map((c) => (
-                    <NinjaCard key={c} cardId={c} width={64} />
-                  ))}
+              <CardGroup label="🕶️ 保留不出" dim>
+                <button className="app-btn" onClick={() => act({ type: 'non:phasePass' })}>
+                  保留（{view.nightInfo?.chosenCount ?? 0}/{view.nightInfo?.holdersTotal ?? 0} 已决定）
+                </button>
               </CardGroup>
             </>
           )}
-
-          {/* 夜晚/结算：打出的牌与暗牌分开标注 */}
           {(view.phase === 'night' || view.phase === 'roundEnd' || view.phase === 'gameEnd') &&
-            view.you.committed && (
-              <>
-                <CardGroup label={view.nightInfo?.currentSeat === mySeat ? '⚡ 正在结算你的牌' : '🗡️ 你打出的牌'}>
-                  <NinjaCard
-                    cardId={view.you.committed}
-                    width={76}
-                    selected={view.nightInfo?.currentSeat === mySeat}
-                  />
-                </CardGroup>
-                <CardGroup label="🕶️ 暗牌（未打出）" dim>
-                  {view.you.hand
-                    .filter((c) => c !== view.you.committed)
-                    .map((c) => (
-                      <NinjaCard key={c} cardId={c} width={64} />
-                    ))}
-                </CardGroup>
-              </>
+            view.you.played.length > 0 && (
+              <CardGroup
+                label={
+                  view.nightInfo?.currentSeat === mySeat ? '⚡ 正在结算你的牌' : '🗡️ 你已亮出的牌'
+                }
+              >
+                {view.you.played.map((c) => (
+                  <NinjaCard key={c} cardId={c} width={64} selected={view.nightInfo?.currentSeat === mySeat && c === view.you.played[view.you.played.length - 1]} />
+                ))}
+              </CardGroup>
+            )}
+          {(view.phase === 'night' || view.phase === 'roundEnd' || view.phase === 'gameEnd') &&
+            view.you.hand.length > 0 &&
+            !killPendingForMe &&
+            !myWindowPending && (
+              <CardGroup label="🕶️ 手牌（未打出）" dim>
+                {view.you.hand.map((c) => (
+                  <NinjaCard key={c} cardId={c} width={64} />
+                ))}
+              </CardGroup>
             )}
         </div>
 

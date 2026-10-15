@@ -4,7 +4,13 @@ import { io as clientIo, type Socket } from 'socket.io-client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createGameServer } from '../src/app';
 import type { RoomManager } from '../src/rooms';
+import { CARDS } from '@dg/games-night-of-ninja';
 import { SOCKET_EVENT, type S2C } from '@dg/protocol';
+
+/** 卡牌所属阶段（0 = 序外，不参与窗口） */
+function cardPhase(instanceId: string): number {
+  return CARDS[instanceId.split('#')[0]]?.phase ?? 0;
+}
 
 let httpServer: http.Server;
 let manager: RoomManager;
@@ -134,6 +140,7 @@ describe('房间与聊天', () => {
 
 describe('对局（人类 + 机器人）', () => {
   /** 简单驱动器：让 c1 跟上回合节奏 */
+  /** 简单驱动器：让 c1 跟上回合节奏（夜晚=逐阶段窗口，持有即打出；被刺杀则承受） */
   function installDriver(c1: Socket) {
     let seq = 0;
     return (view: any) => {
@@ -141,36 +148,49 @@ describe('对局（人类 + 机器人）', () => {
         if (!view.you.picked && view.you.draftPool.length > 0) {
           send(c1, { t: 'gameAction', seq: ++seq, action: { type: 'non:draftPick', cardId: view.you.draftPool[0] } });
         }
-      } else if (view.phase === 'commit' && !view.you.committed) {
-        send(c1, { t: 'gameAction', seq: ++seq, action: { type: 'non:commit', cardId: view.you.hand[0] } });
-      } else if (view.phase === 'night' && view.nightInfo?.currentSeat === view.you.seat) {
-        // 忍者已锁定目标 → 抉择；否则按卡型选目标/选项
-        if (view.nightInfo.lockedTarget !== null && view.nightInfo.lockedTarget !== undefined) {
-          send(c1, { t: 'gameAction', seq: ++seq, action: { type: 'non:choose', choice: 'spare' } });
+      } else if (view.phase === 'night') {
+        const ni = view.nightInfo;
+        if (ni?.killPending && ni.killPending.target === view.you.seat) {
+          send(c1, { t: 'gameAction', seq: ++seq, action: { type: 'non:noReact' } });
           return;
         }
-        const others = view.players.filter((p: any) => p.alive && p.seat !== view.you.seat).map((p: any) => p.seat);
-        if (others.length === 0) return;
-        const cardId = String(view.nightInfo.currentCardId ?? '');
-        const action: any = { type: 'non:resolve' };
-        if (cardId === 'trick-shapeshifter') {
-          if (others.length < 2) return; // 双目标不足，交给超时垫步
-          action.target = others[0];
-          action.target2 = others[1];
-        } else if (cardId === 'trick-troublemaker') {
-          action.target = others[0];
-          action.choice = 'peek';
-        } else if (cardId === 'trick-spirit-merchant') {
-          action.target = others[0];
-          action.choice = 'house';
-        } else if (cardId === 'trick-thief') {
-          action.choice = 'skip';
-        } else if (cardId === 'trick-gravedigger') {
-          action.mode = 'skip';
-        } else {
-          action.target = others[0];
+        if (ni?.myWindowPending) {
+          const card = view.you.hand.find((c: string) => cardPhase(c) === ni.phaseId);
+          send(c1, {
+            t: 'gameAction',
+            seq: ++seq,
+            action: card ? { type: 'non:phasePlay', cardId: card } : { type: 'non:phasePass' },
+          });
+          return;
         }
-        send(c1, { t: 'gameAction', seq: ++seq, action });
+        if (ni?.currentSeat === view.you.seat) {
+          if (ni.lockedTarget !== null && ni.lockedTarget !== undefined) {
+            send(c1, { t: 'gameAction', seq: ++seq, action: { type: 'non:choose', choice: 'spare' } });
+            return;
+          }
+          const others = view.players.filter((p: any) => p.alive && p.seat !== view.you.seat).map((p: any) => p.seat);
+          if (others.length === 0) return;
+          const cardId = String(ni.currentCardId ?? '');
+          const action: any = { type: 'non:resolve' };
+          if (cardId === 'trick-shapeshifter') {
+            if (others.length < 2) return; // 双目标不足，交给超时垫步
+            action.target = others[0];
+            action.target2 = others[1];
+          } else if (cardId === 'trick-troublemaker') {
+            action.target = others[0];
+            action.choice = 'peek';
+          } else if (cardId === 'trick-spirit-merchant') {
+            action.target = others[0];
+            action.choice = 'house';
+          } else if (cardId === 'trick-thief') {
+            action.choice = 'skip';
+          } else if (cardId === 'trick-gravedigger') {
+            action.mode = 'skip';
+          } else {
+            action.target = others[0];
+          }
+          send(c1, { t: 'gameAction', seq: ++seq, action });
+        }
       }
     };
   }

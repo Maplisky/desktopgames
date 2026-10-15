@@ -12,6 +12,16 @@ import type { Identity, NonPlayer, NonState, NonView, NonViewPlayer, RoundResult
 export const NON_MIN_PLAYERS = 3;
 export const NON_MAX_PLAYERS = 11;
 
+/** 夜晚五个类型阶段（角标 1-6 为同阶段内的结算顺序） */
+const NIGHT_PHASES = [1, 2, 3, 4, 5] as const;
+const PHASE_LABEL: Record<number, string> = {
+  1: '间谍阶段',
+  2: '通灵阶段',
+  3: '诡术阶段',
+  4: '盲眼刺客阶段',
+  5: '忍者阶段',
+};
+
 /* ================= 工具 ================= */
 
 function rngStep(s: NonState): number {
@@ -50,7 +60,6 @@ function identityDeckFor(n: number): Identity[] {
   return deck;
 }
 
-/** 从代币袋抽一枚（耗尽后重洗） */
 function drawToken(s: NonState, p: NonPlayer, events: GameEvent[]) {
   if (s.tokenIdx >= s.tokenPool.length) {
     s.tokenPool = shuffled(s, [...HONOR_TOKEN_POOL]);
@@ -78,47 +87,79 @@ function startRound(s: NonState, events: GameEvent[]) {
     p.identity = identities[i];
     p.identityKnown = true;
     p.alive = true;
-    p.resolvedCard = null;
     p.killedBy = null;
     p.exposed = false;
     p.hand = [];
-    p.committed = null;
+    p.played = [];
     p.draftPool = deck.slice(i * 3, i * 3 + 3);
     events.push(ev('non:identityDealt', { house: p.identity.house, rank: p.identity.rank }, [p.seat]));
     events.push(ev('non:dealt', { seat: p.seat, count: 3 }));
   });
 }
 
-function advanceNight(s: NonState, events: GameEvent[]) {
+/* ================= 夜晚状态机（逐阶段叫名，从手牌决定亮牌） ================= */
+
+function enterNight(s: NonState, events: GameEvent[]) {
+  s.phase = 'night';
+  s.night = { phaseIdx: 0, window: null, queue: [], qIdx: 0, current: null, pendingKill: null };
+  events.push(ev('non:nightStart', {}));
+  openWindow(s, events);
+}
+
+function openWindow(s: NonState, events: GameEvent[]) {
   const night = s.night!;
-  while (night.idx < night.order.length) {
-    const entry = night.order[night.idx];
+  if (night.phaseIdx >= NIGHT_PHASES.length) {
+    computeRoundEnd(s, events);
+    return;
+  }
+  const phase = NIGHT_PHASES[night.phaseIdx];
+  events.push(ev('non:phaseCall', { phase, label: PHASE_LABEL[phase] }));
+  const holders = s.players.filter((p) => p.alive && p.hand.some((c) => cardOf(c).phase === phase)).map((p) => p.seat);
+  if (holders.length === 0) {
+    events.push(ev('non:phaseSkip', { phase, reason: 'no-holders' }));
+    night.phaseIdx += 1;
+    openWindow(s, events);
+    return;
+  }
+  night.window = { phase, holders, played: [], passed: [] };
+}
+
+/** 窗口关闭：把已亮出的牌按角标升序（同角标按座位）排成结算队列 */
+function closeWindow(s: NonState, events: GameEvent[]) {
+  const night = s.night!;
+  const w = night.window!;
+  night.queue = [...w.played].sort(
+    (a, b) => parseInst(a.card).number - parseInst(b.card).number || a.seat - b.seat,
+  );
+  night.window = null;
+  night.qIdx = 0;
+  resolveNext(s, events);
+}
+
+/** 推进结算队列；牌主已死则作废；需要选择但无合法选择则跳过（防死锁） */
+function resolveNext(s: NonState, events: GameEvent[]) {
+  const night = s.night!;
+  while (night.qIdx < night.queue.length) {
+    const entry = night.queue[night.qIdx];
     const p = s.players[entry.seat];
-    const negated = night.negated.includes(entry.seat);
-    if (!p.alive || negated) {
-      events.push(ev('non:nightSkip', { seat: entry.seat, reason: !p.alive ? 'dead' : 'negated' }));
-      night.idx += 1;
+    if (!p.alive) {
+      events.push(ev('non:nightSkip', { seat: entry.seat, reason: 'dead' }));
+      night.qIdx += 1;
       continue;
     }
-    const card = cardOf(entry.card);
-    p.resolvedCard = entry.card;
     night.current = { seat: entry.seat, card: entry.card };
     events.push(ev('non:resolving', { seat: entry.seat, cardId: parseInst(entry.card).id }));
-    if (card.targetKind !== 'none') {
-      // 需要选择但没有任何合法选择（如已无存活目标）→ 跳过，防止死锁
-      if (nightChoices(s, entry.seat).length === 0) {
-        night.current = null;
-        night.idx += 1;
-        events.push(ev('non:nightSkip', { seat: entry.seat, reason: 'no-targets' }));
-        continue;
-      }
-      return; // 等待该玩家选择
+    if (nightChoices(s, entry.seat).length === 0) {
+      night.current = null;
+      night.qIdx += 1;
+      events.push(ev('non:nightSkip', { seat: entry.seat, reason: 'no-targets' }));
+      continue;
     }
-    // 无需选择：立即结算（反应/被动）
-    applyEffect(s, entry.seat, entry.card, {}, events);
-    night.current = null;
-    night.idx += 1;
+    return; // 等待该玩家选择
   }
+  // 队列结算完毕 → 下一阶段
+  night.phaseIdx += 1;
+  openWindow(s, events);
 }
 
 function applyEffect(
@@ -138,18 +179,20 @@ function applyEffect(
       );
       break;
     case 'mystic': {
-      // 通灵者看的是目标「已打出」的那张忍者牌
+      // 打出的牌本就公开，通灵者看的是目标「手中」的一张忍者牌（随机抽看）
+      const hand = target!.hand;
+      const other = hand.length > 0 ? hand[Math.floor(rngStep(s) * hand.length)] : null;
       events.push(
         ev(
           'non:peek',
-          { target: target!.seat, house: target!.identity.house, rank: target!.identity.rank, otherCard: target!.committed ?? null },
+          { target: target!.seat, house: target!.identity.house, rank: target!.identity.rank, otherCard: other },
           [seat],
         ),
       );
       break;
     }
     case 'trick-shapeshifter': {
-      // 交换的是两个目标之间（可包含易容师本人）；官方：秘密交换，被换者不知新身份
+      // 交换两个目标之间的身份（可包含易容师本人）；秘密交换，被换者不知新身份
       const a = s.players[args.target!];
       const b = s.players[args.target2!];
       events.push(
@@ -170,15 +213,13 @@ function applyEffect(
       const ia = { ...a.identity };
       a.identity = { ...b.identity };
       b.identity = ia;
-      // 易容师亲眼看过两张牌：若自己参与交换，仍知道自己的新身份；其他被换者不知情
       if (a.seat !== seat) a.identityKnown = false;
       if (b.seat !== seat) b.identityKnown = false;
       break;
     }
-    case 'trick-gravedigger': {
-      // 变体动作在 act 中处理（选择弃牌 + 打出/保留），这里不直接调用
+    case 'trick-gravedigger':
+      // 在 act 的 non:resolve 分支处理（选择弃牌 + 打出/保留）
       break;
-    }
     case 'trick-troublemaker': {
       events.push(
         ev('non:peek', { target: target!.seat, house: target!.identity.house, rank: target!.identity.rank }, [seat]),
@@ -226,54 +267,30 @@ function applyEffect(
     case 'trick-judge': {
       me.exposed = true;
       events.push(ev('non:exposed', { seat: me.seat, house: me.identity.house, rank: me.identity.rank }));
-      if (target) attemptKill(s, events, seat, target.seat, { bypassReactions: true });
+      if (target) killNow(s, events, seat, target.seat, true); // 审判官无视镜僧/殉道者
       break;
     }
     case 'blind-assassin':
-      attemptKill(s, events, seat, target!.seat);
-      break;
-    case 'mirror-monk':
-    case 'martyr':
-    case 'mastermind':
-      // 被动：在 attemptKill / 回合结算中生效
+      announceKill(s, events, seat, target!.seat);
       break;
     default:
       throw new Error(`unknown card ${id}`);
   }
 }
 
-function attemptKill(
-  s: NonState,
-  events: GameEvent[],
-  attacker: number,
-  targetSeat: number,
-  opts: { bypassReactions?: boolean } = {},
-) {
+/** 宣告刺杀：进入待反应状态，目标可从手牌打出镜僧/殉道者 */
+function announceKill(s: NonState, events: GameEvent[], attacker: number, targetSeat: number) {
   const t = s.players[targetSeat];
   if (!t.alive) return;
-  events.push(ev('non:killAttempt', { attacker, target: targetSeat }));
-  const tId = t.committed ? parseInst(t.committed).id : null;
-  const tNegated = s.night?.negated.includes(targetSeat) ?? false;
-  if (!opts.bypassReactions && !tNegated) {
-    if (tId === 'mirror-monk') {
-      const a = s.players[attacker];
-      if (a.alive) {
-        a.alive = false;
-        a.killedBy = targetSeat;
-        events.push(ev('non:reflected', { by: targetSeat, attacker }));
-        events.push(ev('non:death', { seat: attacker }));
-      }
-      return;
-    }
-    if (tId === 'martyr') {
-      drawToken(s, t, events);
-      events.push(ev('non:martyred', { seat: targetSeat }));
-      return;
-    }
-  }
-  if (opts.bypassReactions) {
-    events.push(ev('non:judged', { target: targetSeat }));
-  }
+  events.push(ev('non:killPending', { attacker, target: targetSeat }));
+  s.night!.pendingKill = { attacker, target: targetSeat };
+}
+
+/** 无视反应的直接击杀（审判官） */
+function killNow(s: NonState, events: GameEvent[], attacker: number, targetSeat: number, _bypass: boolean) {
+  const t = s.players[targetSeat];
+  if (!t.alive) return;
+  events.push(ev('non:judged', { target: targetSeat }));
   t.alive = false;
   t.killedBy = attacker;
   events.push(ev('non:death', { seat: targetSeat }));
@@ -289,6 +306,7 @@ function bestRanks(s: NonState, house: 'crane' | 'lotus'): number[] {
 
 function computeRoundEnd(s: NonState, events: GameEvent[]) {
   s.phase = 'roundEnd';
+  s.night = null;
   const survivors = s.players.filter((p) => p.alive);
   for (const p of survivors) {
     events.push(
@@ -300,10 +318,8 @@ function computeRoundEnd(s: NonState, events: GameEvent[]) {
     );
   }
 
-  // 主谋：存活主谋直接为其家系拿下回合；浪人主谋 → 无家系获胜；双方家系都有 → 回到排名比较
-  const livingMasterminds = s.players.filter(
-    (p) => p.alive && p.committed !== null && parseInst(p.committed).id === 'mastermind' && !(s.night?.negated.includes(p.seat) ?? false),
-  );
+  // 主谋：计分时从手牌揭示——存活者持主谋则其家系获胜；浪人主谋 → 无家系获胜
+  const livingMasterminds = s.players.filter((p) => p.alive && p.hand.includes('mastermind'));
   let winner: RoundResult['winner'];
   let mastermindSeat: number | null = null;
   let roninMastermindOnly = false;
@@ -313,7 +329,7 @@ function computeRoundEnd(s: NonState, events: GameEvent[]) {
     winner = [...mmHouses][0] as 'crane' | 'lotus';
     mastermindSeat = livingMasterminds.find((p) => p.identity.house === winner)?.seat ?? null;
   } else if (mmHouses.size === 0 && roninMM) {
-    winner = 'none'; // 浪人主谋：无家系获胜
+    winner = 'none';
     mastermindSeat = livingMasterminds.find((p) => p.identity.house === 'ronin')!.seat;
     roninMastermindOnly = true;
   } else {
@@ -331,6 +347,9 @@ function computeRoundEnd(s: NonState, events: GameEvent[]) {
     }
     winner = cmp === 0 ? 'none' : cmp < 0 ? 'crane' : 'lotus';
   }
+  for (const p of livingMasterminds) {
+    events.push(ev('non:mastermindRevealed', { seat: p.seat }));
+  }
 
   const gained: number[] = [];
   const gain = (p: NonPlayer) => {
@@ -341,7 +360,6 @@ function computeRoundEnd(s: NonState, events: GameEvent[]) {
     for (const p of s.players) if (p.identity.house === winner) gain(p);
     for (const p of s.players) if (p.identity.house === 'ronin' && p.alive) gain(p);
   } else if (roninMastermindOnly) {
-    // 浪人主谋：仅浪人按存活规则得分
     for (const p of s.players) if (p.identity.house === 'ronin' && p.alive) gain(p);
   } else {
     // 完全平局：每位幸存者各得一枚
@@ -389,37 +407,12 @@ function step(s: NonState, events: GameEvent[]) {
     }
     case 'draft2': {
       if (s.picked.length < s.players.length) return false;
-      // 余牌弃置桌面中央（掘墓人可用）
       for (const p of s.players) {
         for (const c of p.draftPool) s.discardPile.push(c);
         p.draftPool = [];
       }
-      s.phase = 'commit';
       events.push(ev('non:draftDone', { discards: s.discardPile.length }));
-      return true;
-    }
-    case 'commit': {
-      const waiting = s.players.filter((p) => p.alive && p.committed === null);
-      if (waiting.length > 0) return false;
-      // 同类型内按角标数字升序，再按座位
-      const order = s.players
-        .filter((p) => p.alive && p.committed !== null)
-        .map((p) => ({ seat: p.seat, card: p.committed! }))
-        .sort((a, b) => {
-          const ca = cardOf(a.card);
-          const cb = cardOf(b.card);
-          return ca.phase - cb.phase || parseInst(a.card).number - parseInst(b.card).number || a.seat - b.seat;
-        });
-      s.night = { order, idx: 0, negated: [], current: null };
-      s.phase = 'night';
-      events.push(ev('non:nightStart', { count: order.length }));
-      advanceNight(s, events);
-      return true;
-    }
-    case 'night': {
-      const night = s.night!;
-      if (night.current || night.idx < night.order.length) return false;
-      computeRoundEnd(s, events);
+      enterNight(s, events);
       return true;
     }
     case 'roundEnd': {
@@ -431,152 +424,7 @@ function step(s: NonState, events: GameEvent[]) {
   }
 }
 
-function act(
-  s: NonState,
-  seat: number,
-  action: { type: string } & Record<string, unknown>,
-  events: GameEvent[],
-): Reject | null {
-  const p = s.players[seat];
-  if (!p) return { ok: false, reason: '座位不存在' };
-  switch (action.type) {
-    case 'non:draftPick': {
-      if (s.phase !== 'draft1' && s.phase !== 'draft2') return { ok: false, reason: '不在轮抽阶段' };
-      if (s.picked.includes(seat)) return { ok: false, reason: '你已完成本阶段选牌' };
-      const cardId = String(action.cardId ?? '');
-      const i = p.draftPool.indexOf(cardId);
-      if (i < 0) return { ok: false, reason: '该牌不在你的候选牌中' };
-      p.draftPool.splice(i, 1);
-      p.hand.push(cardId);
-      s.picked.push(seat);
-      events.push(ev('non:draftPicked', { seat, pickNumber: s.phase === 'draft1' ? 1 : 2 }));
-      return null;
-    }
-    case 'non:commit': {
-      if (s.phase !== 'commit') return { ok: false, reason: '不在出牌阶段' };
-      if (!p.alive) return { ok: false, reason: '你已出局' };
-      if (p.committed !== null) return { ok: false, reason: '你已打出牌' };
-      const cardId = String(action.cardId ?? '');
-      if (!p.hand.includes(cardId)) return { ok: false, reason: '该牌不在你手中' };
-      p.committed = cardId;
-      events.push(ev('non:committed', { seat }));
-      return null;
-    }
-    case 'non:choose': {
-      if (s.phase !== 'night' || !s.night?.current) return { ok: false, reason: '当前无需抉择' };
-      if (s.night.current.seat !== seat) return { ok: false, reason: '没轮到你结算' };
-      const card = cardOf(s.night.current.card);
-      const locked = s.night.current.lockedTarget;
-      if (!card.shinobiStyle || locked === undefined) return { ok: false, reason: '当前无需抉择' };
-      if (action.choice !== 'kill' && action.choice !== 'spare') return { ok: false, reason: '需要选择杀或放' };
-      if (!s.players[locked]?.alive) return { ok: false, reason: '目标已死亡' };
-      if (action.choice === 'kill') attemptKill(s, events, seat, locked);
-      else events.push(ev('non:spared', { seat: locked }));
-      s.night.current = null;
-      s.night.idx += 1;
-      advanceNight(s, events);
-      return null;
-    }
-    case 'non:resolve': {
-      if (s.phase !== 'night' || !s.night?.current) return { ok: false, reason: '当前无需结算选择' };
-      if (s.night.current.seat !== seat) return { ok: false, reason: '没轮到你结算' };
-      const cardId = s.night.current.card;
-      const card = cardOf(cardId);
-      const target = action.target !== undefined ? Number(action.target) : undefined;
-      const target2 = action.target2 !== undefined ? Number(action.target2) : undefined;
-
-      // 掘墓人：从弃牌堆拿牌（打出/保留/跳过）
-      if (card.id === 'trick-gravedigger') {
-        const mode = String(action.mode ?? 'skip');
-        if (mode === 'skip') {
-          s.night.current = null;
-          s.night.idx += 1;
-          advanceNight(s, events);
-          return null;
-        }
-        const pick = String(action.pick ?? '');
-        const i = s.discardPile.indexOf(pick);
-        if (i < 0) return { ok: false, reason: '该牌不在弃牌堆中' };
-        s.discardPile.splice(i, 1);
-        if (mode === 'keep') {
-          // 收下的牌保密：公开事件只带 mode，牌 id 仅发给掘墓人本人
-          events.push(ev('non:graveTaken', { seat, mode }));
-          events.push(ev('non:graveTaken', { seat, mode, cardId: parseInst(pick).id }, [seat]));
-        } else {
-          events.push(ev('non:graveTaken', { seat, mode, cardId: parseInst(pick).id }));
-        }
-        if (mode === 'keep') {
-          p.hand.push(pick);
-          s.night.current = null;
-          s.night.idx += 1;
-          advanceNight(s, events);
-          return null;
-        }
-        if (mode === 'play') {
-          const taken = cardOf(pick);
-          if (taken.targetKind === 'none') return { ok: false, reason: '该牌无法立即打出，只能收下' };
-          // 立即打出需要选择的牌：当前结算切换为那张牌
-          p.resolvedCard = pick;
-          s.night.current = { seat, card: pick };
-          events.push(ev('non:resolving', { seat, cardId: parseInst(pick).id }));
-          return null;
-        }
-        return { ok: false, reason: '未知的掘墓人选项' };
-      }
-
-      // 忍者：先选窥视目标，杀/放由 non:choose 决定（实体规则「先看后选」）
-      if (card.shinobiStyle) {
-        if (s.night.current.lockedTarget !== undefined) return { ok: false, reason: '已看过目标，请选择杀或放' };
-        if (target === undefined || !Number.isInteger(target)) return { ok: false, reason: '缺少目标' };
-        const t = s.players[target];
-        if (!t || t.seat === seat || !t.alive) return { ok: false, reason: '目标无效' };
-        events.push(ev('non:peek', { target: t.seat, house: t.identity.house, rank: t.identity.rank }, [seat]));
-        s.night.current.lockedTarget = target;
-        return null;
-      }
-
-      const choice = action.choice !== undefined ? String(action.choice) : undefined;
-      // 盗贼：可跳过
-      if (card.id === 'trick-thief' && choice === 'skip') {
-        events.push(ev('non:thiefSkip', { seat }));
-        s.night.current = null;
-        s.night.idx += 1;
-        advanceNight(s, events);
-        return null;
-      }
-      if (card.targetKind === 'anyAliveOther' || card.targetKind === 'variants') {
-        if (target === undefined || !Number.isInteger(target)) return { ok: false, reason: '缺少目标' };
-        const t = s.players[target];
-        if (!t || t.seat === seat || !t.alive) return { ok: false, reason: '目标无效' };
-        if (card.id === 'trick-thief' && t.tokens.length <= p.tokens.length)
-          return { ok: false, reason: '只能对代币数多于你的玩家出手' };
-        if (card.id === 'trick-spirit-merchant' && !['house', 'token', 'swap'].includes(choice ?? ''))
-          return { ok: false, reason: '需要选择查看身份/看代币/交换' };
-        if (card.id === 'trick-spirit-merchant' && choice === 'swap' && (p.tokens.length === 0 || t.tokens.length === 0))
-          return { ok: false, reason: '双方都需持有代币才能交换' };
-        if (card.id === 'trick-troublemaker' && !['peek', 'reveal'].includes(choice ?? ''))
-          return { ok: false, reason: '需要选择只看或公开' };
-      }
-      if (card.targetKind === 'anyTwoAlive') {
-        if (target === undefined || !Number.isInteger(target)) return { ok: false, reason: '缺少目标' };
-        if (target2 === undefined || !Number.isInteger(target2) || target2 === target)
-          return { ok: false, reason: '需要两个不同目标' };
-        if (!s.players[target2]?.alive || !s.players[target]?.alive) return { ok: false, reason: '目标无效' };
-      }
-      applyEffect(s, seat, cardId, { target, target2, choice }, events);
-      s.night.current = null;
-      s.night.idx += 1;
-      advanceNight(s, events);
-      return null;
-    }
-    default:
-      return { ok: false, reason: `未知动作 ${action.type}` };
-  }
-}
-
-/* ================= Definition ================= */
-
-/** 夜晚当前结算者的全部合法选择（供 legalActions 与 advanceNight 死锁检测共用） */
+/** 夜晚结算者的目标选择等（供 legalActions 与死锁检测共用） */
 function nightChoices(state: NonState, seat: number): ActionChoice[] {
   const cur = state.night?.current;
   if (!cur || cur.seat !== seat) return [];
@@ -606,7 +454,7 @@ function nightChoices(state: NonState, seat: number): ActionChoice[] {
     case 'spy':
       return others.map((t) => mk({ target: t }, '间谍', `查看 ${state.players[t].nickname} 的身份`));
     case 'mystic':
-      return others.map((t) => mk({ target: t }, '通灵', `查看 ${state.players[t].nickname} 的身份与打出的牌`));
+      return others.map((t) => mk({ target: t }, '通灵', `查看 ${state.players[t].nickname} 的身份与手中一张牌`));
     case 'trick-troublemaker':
       return others.flatMap((t) => [
         mk({ target: t, choice: 'peek' }, '只看', `偷看 ${state.players[t].nickname} 的身份`),
@@ -689,6 +537,235 @@ function nightChoices(state: NonState, seat: number): ActionChoice[] {
   }
 }
 
+/** 待反应目标的选择：从手牌打出镜僧/殉道者，或承受 */
+function reactChoices(state: NonState, seat: number): ActionChoice[] {
+  const pk = state.night?.pendingKill;
+  if (!pk || pk.target !== seat) return [];
+  const out: ActionChoice[] = [];
+  for (const c of state.players[seat].hand) {
+    const id = parseInst(c).id;
+    if (id === 'mirror-monk') {
+      out.push({
+        action: { type: 'non:react', cardId: c },
+        ui: { kind: 'card', cardId: c, label: '镜僧·反弹', prompt: '打出镜僧：刺杀者反而立刻死亡' },
+      });
+    } else if (id === 'martyr') {
+      out.push({
+        action: { type: 'non:react', cardId: c },
+        ui: { kind: 'card', cardId: c, label: '殉道者·得币', prompt: '打出殉道者：获得一枚荣誉代币并存活' },
+      });
+    }
+  }
+  out.push({
+    action: { type: 'non:noReact' },
+    ui: { kind: 'button', label: '承受', prompt: '不打出反应牌，接受死亡' },
+  });
+  return out;
+}
+
+function act(
+  s: NonState,
+  seat: number,
+  action: { type: string } & Record<string, unknown>,
+  events: GameEvent[],
+): Reject | null {
+  const p = s.players[seat];
+  if (!p) return { ok: false, reason: '座位不存在' };
+  switch (action.type) {
+    case 'non:draftPick': {
+      if (s.phase !== 'draft1' && s.phase !== 'draft2') return { ok: false, reason: '不在轮抽阶段' };
+      if (s.picked.includes(seat)) return { ok: false, reason: '你已完成本阶段选牌' };
+      const cardId = String(action.cardId ?? '');
+      const i = p.draftPool.indexOf(cardId);
+      if (i < 0) return { ok: false, reason: '该牌不在你的候选牌中' };
+      p.draftPool.splice(i, 1);
+      p.hand.push(cardId);
+      s.picked.push(seat);
+      events.push(ev('non:draftPicked', { seat, pickNumber: s.phase === 'draft1' ? 1 : 2 }));
+      return null;
+    }
+    case 'non:phasePlay': {
+      // 夜晚阶段窗口：从手牌亮出一张本阶段牌（打出即公开）
+      const night = s.night;
+      const w = night?.window;
+      if (s.phase !== 'night' || !w) return { ok: false, reason: '不在阶段抉择窗口' };
+      if (!w.holders.includes(seat)) return { ok: false, reason: '你没有本阶段的牌' };
+      if (w.played.some((e) => e.seat === seat) || w.passed.includes(seat))
+        return { ok: false, reason: '你已做出本阶段决定' };
+      const cardId = String(action.cardId ?? '');
+      if (!p.hand.includes(cardId)) return { ok: false, reason: '该牌不在你手中' };
+      if (cardOf(cardId).phase !== w.phase) return { ok: false, reason: '该牌不属于当前阶段' };
+      p.hand.splice(p.hand.indexOf(cardId), 1);
+      p.played.push(cardId);
+      w.played.push({ seat, card: cardId });
+      events.push(ev('non:played', { seat, cardId: parseInst(cardId).id, number: parseInst(cardId).number }));
+      if (w.played.length + w.passed.length >= w.holders.length) closeWindow(s, events);
+      return null;
+    }
+    case 'non:phasePass': {
+      const night = s.night;
+      const w = night?.window;
+      if (s.phase !== 'night' || !w) return { ok: false, reason: '不在阶段抉择窗口' };
+      if (!w.holders.includes(seat)) return { ok: false, reason: '你没有本阶段的牌' };
+      if (w.played.some((e) => e.seat === seat) || w.passed.includes(seat))
+        return { ok: false, reason: '你已做出本阶段决定' };
+      w.passed.push(seat);
+      events.push(ev('non:passed', { seat }));
+      if (w.played.length + w.passed.length >= w.holders.length) closeWindow(s, events);
+      return null;
+    }
+    case 'non:react': {
+      const pk = s.night?.pendingKill;
+      if (!pk) return { ok: false, reason: '当前没有待反应的刺杀' };
+      if (pk.target !== seat) return { ok: false, reason: '你不是被刺杀的目标' };
+      const cardId = String(action.cardId ?? '');
+      if (!p.hand.includes(cardId)) return { ok: false, reason: '该牌不在你手中' };
+      const id = parseInst(cardId).id;
+      if (id !== 'mirror-monk' && id !== 'martyr') return { ok: false, reason: '只能打出镜僧或殉道者' };
+      p.hand.splice(p.hand.indexOf(cardId), 1);
+      p.played.push(cardId);
+      events.push(ev('non:played', { seat, cardId: id, number: 0 }));
+      if (id === 'mirror-monk') {
+        const a = s.players[pk.attacker];
+        if (a.alive) {
+          a.alive = false;
+          a.killedBy = seat;
+          events.push(ev('non:reflected', { by: seat, attacker: pk.attacker }));
+          events.push(ev('non:death', { seat: pk.attacker }));
+        }
+      } else {
+        drawToken(s, p, events);
+        events.push(ev('non:martyred', { seat }));
+      }
+      s.night!.pendingKill = null;
+      s.night!.qIdx += 1;
+      resolveNext(s, events);
+      return null;
+    }
+    case 'non:noReact': {
+      const pk = s.night?.pendingKill;
+      if (!pk) return { ok: false, reason: '当前没有待反应的刺杀' };
+      if (pk.target !== seat) return { ok: false, reason: '你不是被刺杀的目标' };
+      const t = s.players[pk.target];
+      t.alive = false;
+      t.killedBy = pk.attacker;
+      events.push(ev('non:death', { seat: pk.target }));
+      s.night!.pendingKill = null;
+      s.night!.qIdx += 1;
+      resolveNext(s, events);
+      return null;
+    }
+    case 'non:choose': {
+      if (s.phase !== 'night' || !s.night?.current) return { ok: false, reason: '当前无需抉择' };
+      if (s.night.current.seat !== seat) return { ok: false, reason: '没轮到你结算' };
+      const card = cardOf(s.night.current.card);
+      const locked = s.night.current.lockedTarget;
+      if (!card.shinobiStyle || locked === undefined) return { ok: false, reason: '当前无需抉择' };
+      if (action.choice !== 'kill' && action.choice !== 'spare') return { ok: false, reason: '需要选择杀或放' };
+      if (!s.players[locked]?.alive) return { ok: false, reason: '目标已死亡' };
+      if (action.choice === 'kill') {
+        announceKill(s, events, seat, locked);
+        if (s.night!.pendingKill) return null; // 等待目标反应
+      } else {
+        events.push(ev('non:spared', { seat: locked }));
+      }
+      s.night.current = null;
+      s.night.qIdx += 1;
+      resolveNext(s, events);
+      return null;
+    }
+    case 'non:resolve': {
+      if (s.phase !== 'night' || !s.night?.current) return { ok: false, reason: '当前无需结算选择' };
+      if (s.night.current.seat !== seat) return { ok: false, reason: '没轮到你结算' };
+      const cardId = s.night.current.card;
+      const card = cardOf(cardId);
+      const target = action.target !== undefined ? Number(action.target) : undefined;
+      const target2 = action.target2 !== undefined ? Number(action.target2) : undefined;
+
+      if (card.id === 'trick-gravedigger') {
+        const mode = String(action.mode ?? 'skip');
+        if (mode === 'skip') {
+          s.night.current = null;
+          s.night.qIdx += 1;
+          resolveNext(s, events);
+          return null;
+        }
+        const pick = String(action.pick ?? '');
+        const i = s.discardPile.indexOf(pick);
+        if (i < 0) return { ok: false, reason: '该牌不在弃牌堆中' };
+        s.discardPile.splice(i, 1);
+        if (mode === 'keep') {
+          events.push(ev('non:graveTaken', { seat, mode }));
+          events.push(ev('non:graveTaken', { seat, mode, cardId: parseInst(pick).id }, [seat]));
+          p.hand.push(pick);
+          s.night.current = null;
+          s.night.qIdx += 1;
+          resolveNext(s, events);
+          return null;
+        }
+        if (mode === 'play') {
+          const taken = cardOf(pick);
+          if (taken.targetKind === 'none') return { ok: false, reason: '该牌无法立即打出，只能收下' };
+          events.push(ev('non:graveTaken', { seat, mode, cardId: parseInst(pick).id }));
+          p.played.push(pick);
+          s.night.current = { seat, card: pick };
+          events.push(ev('non:resolving', { seat, cardId: parseInst(pick).id }));
+          return null;
+        }
+        return { ok: false, reason: '未知的掘墓人选项' };
+      }
+
+      if (card.shinobiStyle) {
+        if (s.night.current.lockedTarget !== undefined) return { ok: false, reason: '已看过目标，请选择杀或放' };
+        if (target === undefined || !Number.isInteger(target)) return { ok: false, reason: '缺少目标' };
+        const t = s.players[target];
+        if (!t || t.seat === seat || !t.alive) return { ok: false, reason: '目标无效' };
+        events.push(ev('non:peek', { target: t.seat, house: t.identity.house, rank: t.identity.rank }, [seat]));
+        s.night.current.lockedTarget = target;
+        return null;
+      }
+
+      const choice = action.choice !== undefined ? String(action.choice) : undefined;
+      if (card.id === 'trick-thief' && choice === 'skip') {
+        events.push(ev('non:thiefSkip', { seat }));
+        s.night.current = null;
+        s.night.qIdx += 1;
+        resolveNext(s, events);
+        return null;
+      }
+      if (card.targetKind === 'anyAliveOther' || card.targetKind === 'variants') {
+        if (target === undefined || !Number.isInteger(target)) return { ok: false, reason: '缺少目标' };
+        const t = s.players[target];
+        if (!t || t.seat === seat || !t.alive) return { ok: false, reason: '目标无效' };
+        if (card.id === 'trick-thief' && t.tokens.length <= p.tokens.length)
+          return { ok: false, reason: '只能对代币数多于你的玩家出手' };
+        if (card.id === 'trick-spirit-merchant' && !['house', 'token', 'swap'].includes(choice ?? ''))
+          return { ok: false, reason: '需要选择查看身份/看代币/交换' };
+        if (card.id === 'trick-spirit-merchant' && choice === 'swap' && (p.tokens.length === 0 || t.tokens.length === 0))
+          return { ok: false, reason: '双方都需持有代币才能交换' };
+        if (card.id === 'trick-troublemaker' && !['peek', 'reveal'].includes(choice ?? ''))
+          return { ok: false, reason: '需要选择只看或公开' };
+      }
+      if (card.targetKind === 'anyTwoAlive') {
+        if (target === undefined || !Number.isInteger(target)) return { ok: false, reason: '缺少目标' };
+        if (target2 === undefined || !Number.isInteger(target2) || target2 === target)
+          return { ok: false, reason: '需要两个不同目标' };
+        if (!s.players[target2]?.alive || !s.players[target]?.alive) return { ok: false, reason: '目标无效' };
+      }
+      applyEffect(s, seat, cardId, { target, target2, choice }, events);
+      if (s.night.pendingKill) return null; // 刺杀宣告，等待目标反应
+      s.night.current = null;
+      s.night.qIdx += 1;
+      resolveNext(s, events);
+      return null;
+    }
+    default:
+      return { ok: false, reason: `未知动作 ${action.type}` };
+  }
+}
+
+/* ================= Definition ================= */
+
 export const nightOfNinja: GameDefinition<NonState> = {
   id: 'night-of-ninja',
   displayName: '忍者之夜',
@@ -711,10 +788,9 @@ export const nightOfNinja: GameDefinition<NonState> = {
         identityKnown: true,
         draftPool: [],
         hand: [],
-        committed: null,
         tokens: [],
+        played: [],
         alive: true,
-        resolvedCard: null,
         killedBy: null,
         exposed: false,
       })),
@@ -742,20 +818,30 @@ export const nightOfNinja: GameDefinition<NonState> = {
           activeSeats: state.players.filter((p) => !state.picked.includes(p.seat)).map((p) => p.seat),
           timerMs: 45_000,
         };
-      case 'commit':
-        return {
-          id: 'commit',
-          label: '暗选出牌',
-          activeSeats: state.players.filter((p) => p.alive && p.committed === null).map((p) => p.seat),
-          timerMs: 30_000,
-        };
-      case 'night':
+      case 'night': {
+        const n = state.night!;
+        let active: number[] = [];
+        if (n.pendingKill) {
+          // 待反应优先：此刻只有被刺杀者需要决定（current 尚未清除）
+          active = [n.pendingKill.target];
+        } else if (n.window) {
+          const chosen = new Set([...n.window.played.map((e) => e.seat), ...n.window.passed]);
+          active = n.window.holders.filter((seat) => !chosen.has(seat));
+        } else if (n.current) {
+          active = [n.current.seat];
+        }
+        const label = n.window
+          ? `忍者之夜 · ${PHASE_LABEL[NIGHT_PHASES[n.phaseIdx]]}`
+          : n.pendingKill
+            ? '忍者之夜 · 生死抉择'
+            : '忍者之夜 · 结算';
         return {
           id: 'night',
-          label: '忍者之夜 · 结算',
-          activeSeats: state.night?.current ? [state.night.current.seat] : [],
-          timerMs: state.night?.current ? 30_000 : undefined,
+          label,
+          activeSeats: active,
+          timerMs: active.length > 0 ? (n.pendingKill ? 20_000 : 30_000) : undefined,
         };
+      }
       case 'roundEnd':
         return { id: 'roundEnd', label: '回合结算', activeSeats: [], autoAfterMs: 6_000 };
       case 'gameEnd':
@@ -774,10 +860,12 @@ export const nightOfNinja: GameDefinition<NonState> = {
   applyTimeout(state: NonState, seat: number) {
     const choices = this.legalActions(state, seat);
     if (choices.length === 0) return { ok: false as const, reason: '无可用垫步动作' };
-    // 垫步尽量保守：可跳过则跳过（盗贼/掘墓人），可放过则放过（忍者），否则选第一个
+    // 垫步优先：被刺杀时有反应牌则打出（几乎总是更优）；窗口保留；可跳过则跳过；可放过则放过
+    const react = choices.find((c) => c.action.type === 'non:react');
+    const pass = choices.find((c) => c.action.type === 'non:phasePass');
     const skip = choices.find((c) => c.action.choice === 'skip' || c.action.mode === 'skip');
     const spare = choices.find((c) => c.action.choice === 'spare');
-    return this.applyAction(state, seat, (skip ?? spare ?? choices[0]).action);
+    return this.applyAction(state, seat, (react ?? pass ?? skip ?? spare ?? choices[0]).action);
   },
 
   auto(state: NonState) {
@@ -804,15 +892,27 @@ export const nightOfNinja: GameDefinition<NonState> = {
           ui: { kind: 'card' as const, cardId },
         }));
       }
-      case 'commit': {
-        if (!p.alive || p.committed !== null) return [];
-        return p.hand.map((cardId) => ({
-          action: { type: 'non:commit', cardId },
-          ui: { kind: 'card' as const, cardId, label: '打出' },
-        }));
-      }
-      case 'night':
+      case 'night': {
+        const n = state.night!;
+        if (n.pendingKill) return reactChoices(state, seat);
+        if (n.window) {
+          if (!n.window.holders.includes(seat)) return [];
+          const chosen = n.window.played.some((e) => e.seat === seat) || n.window.passed.includes(seat);
+          if (chosen) return [];
+          const out: ActionChoice[] = p.hand
+            .filter((c) => cardOf(c).phase === n.window!.phase)
+            .map((cardId) => ({
+              action: { type: 'non:phasePlay', cardId },
+              ui: { kind: 'card' as const, cardId, label: '打出' },
+            }));
+          out.push({
+            action: { type: 'non:phasePass' },
+            ui: { kind: 'button', label: '保留', prompt: '本阶段不打出（此牌本夜不再有机会）' },
+          });
+          return out;
+        }
         return nightChoices(state, seat);
+      }
       default:
         return [];
     }
@@ -830,14 +930,13 @@ export const nightOfNinja: GameDefinition<NonState> = {
       nickname: p.nickname,
       isBot: p.isBot,
       alive: p.alive,
-      hasCommitted: p.committed !== null,
-      resolvedCard: p.resolvedCard,
-      negated: state.night?.negated.includes(p.seat) ?? false,
+      played: [...p.played],
       handCount: p.hand.length,
       tokenCount: p.tokens.length,
       exposedIdentity: p.exposed ? p.identity : null,
       revealedIdentity: inReveal && (p.alive || state.phase === 'gameEnd') ? p.identity : null,
     }));
+    const n = state.night;
     return {
       phase: state.phase,
       round: state.round,
@@ -850,7 +949,7 @@ export const nightOfNinja: GameDefinition<NonState> = {
         tokens: [...me.tokens],
         alive: me.alive,
         hand: [...me.hand],
-        committed: me.committed,
+        played: [...me.played],
         draftPool: [...me.draftPool],
         picked: state.picked.includes(seat),
       },
@@ -859,13 +958,21 @@ export const nightOfNinja: GameDefinition<NonState> = {
         state.phase === 'draft1' || state.phase === 'draft2'
           ? { pickNumber: state.phase === 'draft1' ? 1 : 2, doneCount: state.picked.length, total: state.players.length }
           : null,
-      nightInfo: state.night
+      nightInfo: n
         ? {
-            currentSeat: state.night.current?.seat ?? null,
-            currentCardId: state.night.current ? parseInst(state.night.current.card).id : null,
-            lockedTarget: state.night.current?.lockedTarget ?? null,
-            resolvedCount: state.night.idx,
-            total: state.night.order.length,
+            phaseId: NIGHT_PHASES[n.phaseIdx] ?? 5,
+            phaseLabel: PHASE_LABEL[NIGHT_PHASES[n.phaseIdx] ?? 5] ?? '',
+            myWindowPending:
+              !!n.window && n.window.holders.includes(seat) && !n.window.played.some((e) => e.seat === seat) && !n.window.passed.includes(seat),
+            holdersTotal: n.window?.holders.length ?? 0,
+            chosenCount: (n.window?.played.length ?? 0) + (n.window?.passed.length ?? 0),
+            windowPlayed: (n.window?.played ?? []).map((e) => ({ seat: e.seat, cardId: parseInst(e.card).id })),
+            currentSeat: n.current?.seat ?? null,
+            currentCardId: n.current ? parseInst(n.current.card).id : null,
+            lockedTarget: n.current?.lockedTarget ?? null,
+            killPending: n.pendingKill ? { ...n.pendingKill } : null,
+            resolvedCount: n.qIdx,
+            total: n.queue.length,
           }
         : null,
       discardPile: isGravedigger ? [...state.discardPile] : [],

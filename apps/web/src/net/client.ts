@@ -30,6 +30,7 @@ export function getSocket(): Socket {
         break;
       case 'gameSync':
         st().setGameView(m.view as never, m.rev);
+        if (typeof m.lastSeq === 'number') st().noteLastSeq(m.lastSeq);
         break;
       case 'gameEvents':
         st().pushEvents(m.rev, m.events);

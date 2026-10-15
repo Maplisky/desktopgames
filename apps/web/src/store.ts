@@ -42,6 +42,8 @@ interface DGStore {
   prefs: Prefs;
   /** 最近一次服务端错误码（用于页面导航类处理） */
   lastErrorCode: string | null;
+  /** 服务端已接受的最大动作 seq（断线重连后客户端据此对齐计数器） */
+  lastServerSeq: number;
 
   setProfile: (p: Profile) => void;
   setToken: (t: string) => void;
@@ -55,6 +57,7 @@ interface DGStore {
   dismissToast: (id: number) => void;
   setPrefs: (p: Partial<Prefs>) => void;
   setLastErrorCode: (c: string | null) => void;
+  noteLastSeq: (n: number) => void;
 }
 
 let toastId = 0;
@@ -71,6 +74,7 @@ export const useGame = create<DGStore>((set, get) => ({
   toasts: [],
   prefs: load('dg.prefs', DEFAULT_PREFS),
   lastErrorCode: null,
+  lastServerSeq: -1,
 
   setProfile: (p) => {
     localStorage.setItem('dg.profile', JSON.stringify(p));
@@ -101,6 +105,7 @@ export const useGame = create<DGStore>((set, get) => ({
   },
   dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((x) => x.id !== id) })),
   setLastErrorCode: (c) => set({ lastErrorCode: c }),
+  noteLastSeq: (n) => set((s) => (n > s.lastServerSeq ? { lastServerSeq: n } : {})),
   setPrefs: (p) => {
     const next = { ...get().prefs, ...p };
     localStorage.setItem('dg.prefs', JSON.stringify(next));

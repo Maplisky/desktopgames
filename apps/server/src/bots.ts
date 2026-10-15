@@ -73,23 +73,6 @@ export class BotBrain {
           }
           break;
         }
-        case 'non:identitySwap': {
-          const a = Number(p.a);
-          const b = Number(p.b);
-          const ma = this.memory.get(a);
-          const mb = this.memory.get(b);
-          if (ma && mb) {
-            this.memory.set(a, mb);
-            this.memory.set(b, ma);
-          } else {
-            this.memory.delete(a);
-            this.memory.delete(b);
-          }
-          break;
-        }
-        case 'non:disguise':
-          this.memory.delete(Number(p.seat));
-          break;
         case 'non:roundStart':
           this.resetRound();
           break;
@@ -119,8 +102,8 @@ export function chooseBotAction(
   // 身份不明（被易容过）时不能信任旧认知 → 不做阵营判断
   const myHouse: string | null = me.identityKnown ? me.identity.house : null;
 
-  /* ---- 轮抽 / 暗选：按卡牌价值 + 局面倾向 ---- */
-  if (view.phase === 'draft1' || view.phase === 'draft2' || view.phase === 'commit') {
+  /* ---- 轮抽：按卡牌价值 + 局面倾向 ---- */
+  if (view.phase === 'draft1' || view.phase === 'draft2') {
     let best = choices[0];
     let bestScore = -Infinity;
     for (const c of choices) {
@@ -134,6 +117,35 @@ export function chooseBotAction(
       }
     }
     return best;
+  }
+
+  /* ---- 夜晚阶段窗口：打出本阶段最优的一张（打出即公开；不打出则作废） ---- */
+  if (view.phase === 'night' && view.nightInfo?.myWindowPending) {
+    const matching = choices.filter((c) => c.action.type === 'non:phasePlay');
+    if (matching.length === 0) {
+      const pass = choices.find((c) => c.action.type === 'non:phasePass');
+      return pass ?? choices[0];
+    }
+    let best = matching[0];
+    let bestScore = -Infinity;
+    for (const c of matching) {
+      const id = String(c.action.cardId ?? '').split('#')[0];
+      let sc = (CARD_SCORE[id] ?? 1) + Math.random() * 0.8;
+      if (behind && (id === 'blind-assassin' || id === 'shinobi' || id === 'trick-judge')) sc += 1.2;
+      if (!behind && id === 'trick-thief') sc += 0.6; // 领先时偷代币扩大优势
+      if (sc > bestScore) {
+        bestScore = sc;
+        best = c;
+      }
+    }
+    return best;
+  }
+
+  /* ---- 被刺杀待反应：有镜僧/殉道者就打出 ---- */
+  if (view.phase === 'night' && view.nightInfo?.killPending && view.nightInfo.killPending.target === seat) {
+    const react = choices.find((c) => c.action.type === 'non:react');
+    if (react) return react;
+    return choices.find((c) => c.action.type === 'non:noReact') ?? choices[0];
   }
 
   /* ---- 忍者杀/放（已窥视，情报刚入脑） ---- */

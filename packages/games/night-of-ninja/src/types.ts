@@ -1,4 +1,4 @@
-export type NonPhase = 'draft1' | 'draft2' | 'commit' | 'night' | 'roundEnd' | 'gameEnd';
+export type NonPhase = 'draft1' | 'draft2' | 'night' | 'roundEnd' | 'gameEnd';
 export type House = 'crane' | 'lotus' | 'ronin';
 
 export interface Identity {
@@ -18,12 +18,12 @@ export interface NonPlayer {
   identityKnown: boolean;
   draftPool: string[];
   hand: string[];
-  committed: string | null;
   /** 荣誉代币（面值仅本人视角可见） */
   tokens: number[];
   /* ---- 公开进度 ---- */
+  /** 本夜已亮出的牌（打出即公开，按打出顺序） */
+  played: string[];
   alive: boolean;
-  resolvedCard: string | null;
   killedBy: number | null;
   exposed: boolean;
 }
@@ -36,12 +36,21 @@ export interface RoundResult {
   gainedSeats: number[];
 }
 
+/**
+ * 夜晚状态机（还原实体规则：逐阶段叫名，从手牌决定是否亮牌）：
+ * - window：某类型阶段开放中，持有者各自选择打出（立即公开）或保留；
+ * - queue/window 关闭后按角标数字升序排列的结算队列；
+ * - current：正在结算的牌（等待目标选择/杀放抉择）；
+ * - pendingKill：刺杀已宣告，等待目标从手牌打出反应牌（镜僧/殉道者）或承受。
+ */
 export interface NightState {
-  order: Array<{ seat: number; card: string }>;
-  idx: number;
-  negated: number[];
-  /** 正在结算的牌；忍者的 lockedTarget = 已窥视并锁定的目标（等待杀/放抉择） */
+  /** 0..4 → 间谍/通灵/诡术/盲眼刺客/忍者 */
+  phaseIdx: number;
+  window: { phase: number; holders: number[]; played: Array<{ seat: number; card: string }>; passed: number[] } | null;
+  queue: Array<{ seat: number; card: string }>;
+  qIdx: number;
   current: { seat: number; card: string; lockedTarget?: number } | null;
+  pendingKill: { attacker: number; target: number } | null;
 }
 
 export interface NonState {
@@ -71,9 +80,8 @@ export interface NonViewPlayer {
   nickname: string;
   isBot: boolean;
   alive: boolean;
-  hasCommitted: boolean;
-  resolvedCard: string | null;
-  negated: boolean;
+  /** 本夜已亮出的牌（公开） */
+  played: string[];
   handCount: number;
   /** 公开的荣誉代币枚数（面值保密） */
   tokenCount: number;
@@ -96,17 +104,26 @@ export interface NonView {
     tokens: number[];
     alive: boolean;
     hand: string[];
-    committed: string | null;
+    played: string[];
     draftPool: string[];
     picked: boolean;
   };
   players: NonViewPlayer[];
   draft: { pickNumber: 1 | 2; doneCount: number; total: number } | null;
   nightInfo: {
+    phaseId: number;
+    phaseLabel: string;
+    /** 我持有本阶段牌且尚未决定（打出/保留） */
+    myWindowPending: boolean;
+    holdersTotal: number;
+    chosenCount: number;
+    /** 本阶段已亮出的牌 */
+    windowPlayed: Array<{ seat: number; cardId: string }>;
     currentSeat: number | null;
     currentCardId: string | null;
-    /** 忍者已锁定的窥视目标（等待杀/放） */
     lockedTarget: number | null;
+    /** 刺杀待反应（target 需要决定是否打出镜僧/殉道者） */
+    killPending: { target: number; attacker: number } | null;
     resolvedCount: number;
     total: number;
   } | null;
