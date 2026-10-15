@@ -563,15 +563,19 @@ export class RoomManager {
       return;
     }
     const pi = def.phaseInfo(room.game.state);
-    this.updatePhaseTimer(room, pi.id, pi.timerMs, pi.activeSeats.length > 0);
+    // 夜晚阶段每个结算者的抉择需要独立计时（否则第一人超时后后续永不超时）
+    const token =
+      pi.id === 'night' && room.game.state.night?.current
+        ? `${room.game.state.round}:night:${room.game.state.night.current.seat}:${room.game.state.night.current.card}`
+        : `${room.game.state.round}:${pi.id}`;
+    this.updatePhaseTimer(room, token, pi.timerMs, pi.activeSeats.length > 0);
     this.sendAllGameSync(room);
     this.sendRoom(room); // 顶栏阶段标签/回合数实时更新
     this.scheduleBots(room);
   }
 
-  private updatePhaseTimer(room: Room, phaseId: string, timerMs: number | undefined, hasActive: boolean) {
+  private updatePhaseTimer(room: Room, token: string, timerMs: number | undefined, hasActive: boolean) {
     const g = room.game!;
-    const token = `${g.state.round}:${phaseId}`;
     if (g.phaseToken !== token) {
       g.phaseToken = token;
       g.deadline = timerMs && hasActive ? Date.now() + timerMs : null;

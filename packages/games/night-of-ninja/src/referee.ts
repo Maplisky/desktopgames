@@ -104,7 +104,16 @@ function advanceNight(s: NonState, events: GameEvent[]) {
     p.resolvedCard = entry.card;
     night.current = { seat: entry.seat, card: entry.card };
     events.push(ev('non:resolving', { seat: entry.seat, cardId: parseInst(entry.card).id }));
-    if (card.targetKind !== 'none') return; // 等待该玩家选择
+    if (card.targetKind !== 'none') {
+      // 需要选择但没有任何合法选择（如已无存活目标）→ 跳过，防止死锁
+      if (nightChoices(s, entry.seat).length === 0) {
+        night.current = null;
+        night.idx += 1;
+        events.push(ev('non:nightSkip', { seat: entry.seat, reason: 'no-targets' }));
+        continue;
+      }
+      return; // 等待该玩家选择
+    }
     // 无需选择：立即结算（反应/被动）
     applyEffect(s, entry.seat, entry.card, {}, events);
     night.current = null;
@@ -498,17 +507,11 @@ function act(
         }
         if (mode === 'play') {
           const taken = cardOf(pick);
-          if (taken.targetKind === 'none') {
-            applyEffect(s, seat, pick, {}, events);
-            s.night.current = null;
-            s.night.idx += 1;
-            advanceNight(s, events);
-          } else {
-            // 立即打出需要选择的牌：当前结算切换为那张牌
-            p.resolvedCard = pick;
-            s.night.current = { seat, card: pick };
-            events.push(ev('non:resolving', { seat, cardId: parseInst(pick).id }));
-          }
+          if (taken.targetKind === 'none') return { ok: false, reason: '该牌无法立即打出，只能收下' };
+          // 立即打出需要选择的牌：当前结算切换为那张牌
+          p.resolvedCard = pick;
+          s.night.current = { seat, card: pick };
+          events.push(ev('non:resolving', { seat, cardId: parseInst(pick).id }));
           return null;
         }
         return { ok: false, reason: '未知的掘墓人选项' };
@@ -563,6 +566,113 @@ function act(
 }
 
 /* ================= Definition ================= */
+
+/** 夜晚当前结算者的全部合法选择（供 legalActions 与 advanceNight 死锁检测共用） */
+function nightChoices(state: NonState, seat: number): ActionChoice[] {
+  const cur = state.night?.current;
+  if (!cur || cur.seat !== seat) return [];
+  const card = cardOf(cur.card);
+  const others = aliveOthers(state, seat);
+  const mk = (action: Record<string, unknown>, label: string, prompt: string): ActionChoice => ({
+    action: { type: 'non:resolve', ...action } as ActionChoice['action'],
+    ui: {
+      kind: 'button' as const,
+      label,
+      targetSeats: action.target !== undefined ? [Number(action.target)] : undefined,
+      prompt,
+    },
+  });
+  if (card.shinobiStyle) {
+    const locked = cur.lockedTarget;
+    if (locked !== undefined) {
+      const name = state.players[locked]?.nickname ?? String(locked);
+      return [
+        { action: { type: 'non:choose', choice: 'kill' }, ui: { kind: 'button', label: '忍者·杀', prompt: `杀死 ${name}` } },
+        { action: { type: 'non:choose', choice: 'spare' }, ui: { kind: 'button', label: '忍者·放', prompt: `放过 ${name}` } },
+      ];
+    }
+    return others.map((t) => mk({ target: t }, '窥视', `查看 ${state.players[t].nickname} 的身份，再决定杀或放`));
+  }
+  switch (card.id) {
+    case 'spy':
+      return others.map((t) => mk({ target: t }, '间谍', `查看 ${state.players[t].nickname} 的身份`));
+    case 'mystic':
+      return others.map((t) => mk({ target: t }, '通灵', `查看 ${state.players[t].nickname} 的身份与打出的牌`));
+    case 'trick-troublemaker':
+      return others.flatMap((t) => [
+        mk({ target: t, choice: 'peek' }, '只看', `偷看 ${state.players[t].nickname} 的身份`),
+        mk({ target: t, choice: 'reveal' }, '公开', `查看并公开 ${state.players[t].nickname} 的身份`),
+      ]);
+    case 'trick-spirit-merchant':
+      return others.flatMap((t) => [
+        mk({ target: t, choice: 'house' }, '看身份', `查看 ${state.players[t].nickname} 的身份`),
+        mk({ target: t, choice: 'token' }, '看代币', `偷看 ${state.players[t].nickname} 的一枚代币面值`),
+        mk({ target: t, choice: 'swap' }, '换代币', `与 ${state.players[t].nickname} 交换一枚代币`),
+      ]);
+    case 'trick-thief': {
+      const rich = state.players.filter((q) => q.alive && q.seat !== seat && q.tokens.length > state.players[seat].tokens.length);
+      const out = rich.map((q) => mk({ target: q.seat }, '偷', `从代币更多的 ${q.nickname} 处拿一枚`));
+      out.push({
+        action: { type: 'non:resolve', choice: 'skip' },
+        ui: { kind: 'button', label: '跳过', prompt: '不偷任何人' },
+      });
+      return out;
+    }
+    case 'trick-judge':
+      return others.map((t) => mk({ target: t }, '审判', `杀死 ${state.players[t].nickname}（无视镜僧/殉道者）`));
+    case 'blind-assassin':
+      return others.map((t) => mk({ target: t }, '刺杀', `杀死 ${state.players[t].nickname}`));
+    case 'trick-shapeshifter': {
+      const alive = state.players.filter((q) => q.alive);
+      const out: ActionChoice[] = [];
+      for (let i = 0; i < alive.length; i++)
+        for (let j = i + 1; j < alive.length; j++) {
+          const a = alive[i].seat;
+          const b = alive[j].seat;
+          out.push({
+            action: { type: 'non:resolve', target: a, target2: b },
+            ui: {
+              kind: 'button',
+              label: '易容',
+              targetSeats: [a, b],
+              prompt: `查看并秘密交换 ${state.players[a].nickname} 与 ${state.players[b].nickname} 的身份`,
+            },
+          });
+        }
+      return out;
+    }
+    case 'trick-gravedigger': {
+      // 无目标类牌（反应/被动）只能收下，不能「立即打出」
+      const out: ActionChoice[] = state.discardPile
+        .filter((d) => cardOf(d).targetKind !== 'none')
+        .map((d): ActionChoice[] => [
+          {
+            action: { type: 'non:resolve', pick: d, mode: 'play' },
+            ui: { kind: 'button', label: `打出·${CARDS[parseInst(d).id].name}`, prompt: `立即打出弃牌 ${CARDS[parseInst(d).id].name}` },
+          },
+          {
+            action: { type: 'non:resolve', pick: d, mode: 'keep' },
+            ui: { kind: 'button', label: `收下·${CARDS[parseInst(d).id].name}`, prompt: `将 ${CARDS[parseInst(d).id].name} 收入手牌` },
+          },
+        ])
+        .flat();
+      const keepOnly = state.discardPile.filter((d) => cardOf(d).targetKind === 'none');
+      for (const d of keepOnly) {
+        out.push({
+          action: { type: 'non:resolve', pick: d, mode: 'keep' },
+          ui: { kind: 'button', label: `收下·${CARDS[parseInst(d).id].name}`, prompt: `将 ${CARDS[parseInst(d).id].name} 收入手牌` },
+        });
+      }
+      out.push({
+        action: { type: 'non:resolve', mode: 'skip' },
+        ui: { kind: 'button', label: '跳过', prompt: '不拿弃牌' },
+      });
+      return out;
+    }
+    default:
+      return [];
+  }
+}
 
 export const nightOfNinja: GameDefinition<NonState> = {
   id: 'night-of-ninja',
@@ -684,102 +794,8 @@ export const nightOfNinja: GameDefinition<NonState> = {
           ui: { kind: 'card' as const, cardId, label: '打出' },
         }));
       }
-      case 'night': {
-        const cur = state.night?.current;
-        if (!cur || cur.seat !== seat) return [];
-        const card = cardOf(cur.card);
-        const others = aliveOthers(state, seat);
-        const mk = (action: Record<string, unknown>, label: string, prompt: string): ActionChoice => ({
-          action: { type: 'non:resolve', ...action } as ActionChoice['action'],
-          ui: {
-            kind: 'button' as const,
-            label,
-            targetSeats: action.target !== undefined ? [Number(action.target)] : undefined,
-            prompt,
-          },
-        });
-        if (card.shinobiStyle) {
-          const locked = cur.lockedTarget;
-          if (locked !== undefined) {
-            const name = state.players[locked]?.nickname ?? String(locked);
-            return [
-              { action: { type: 'non:choose', choice: 'kill' }, ui: { kind: 'button', label: '忍者·杀', prompt: `杀死 ${name}` } },
-              { action: { type: 'non:choose', choice: 'spare' }, ui: { kind: 'button', label: '忍者·放', prompt: `放过 ${name}` } },
-            ];
-          }
-          return others.map((t) => mk({ target: t }, '窥视', `查看 ${state.players[t].nickname} 的身份，再决定杀或放`));
-        }
-        switch (card.id) {
-          case 'spy':
-            return others.map((t) => mk({ target: t }, '间谍', `查看 ${state.players[t].nickname} 的身份`));
-          case 'mystic':
-            return others.map((t) => mk({ target: t }, '通灵', `查看 ${state.players[t].nickname} 的身份与打出的牌`));
-          case 'trick-troublemaker':
-            return others.flatMap((t) => [
-              mk({ target: t, choice: 'peek' }, '只看', `偷看 ${state.players[t].nickname} 的身份`),
-              mk({ target: t, choice: 'reveal' }, '公开', `查看并公开 ${state.players[t].nickname} 的身份`),
-            ]);
-          case 'trick-spirit-merchant':
-            return others.flatMap((t) => [
-              mk({ target: t, choice: 'house' }, '看身份', `查看 ${state.players[t].nickname} 的身份`),
-              mk({ target: t, choice: 'token' }, '看代币', `偷看 ${state.players[t].nickname} 的一枚代币面值`),
-              mk({ target: t, choice: 'swap' }, '换代币', `与 ${state.players[t].nickname} 交换一枚代币`),
-            ]);
-          case 'trick-thief': {
-            const rich = state.players.filter((q) => q.alive && q.seat !== seat && q.tokens.length > p.tokens.length);
-            const out = rich.map((q) => mk({ target: q.seat }, '偷', `从代币更多的 ${q.nickname} 处拿一枚`));
-            out.push({
-              action: { type: 'non:resolve', choice: 'skip' },
-              ui: { kind: 'button', label: '跳过', prompt: '不偷任何人' },
-            });
-            return out;
-          }
-          case 'trick-judge':
-            return others.map((t) => mk({ target: t }, '审判', `杀死 ${state.players[t].nickname}（无视镜僧/殉道者）`));
-          case 'blind-assassin':
-            return others.map((t) => mk({ target: t }, '刺杀', `杀死 ${state.players[t].nickname}`));
-          case 'trick-shapeshifter': {
-            const alive = state.players.filter((q) => q.alive);
-            const out: ActionChoice[] = [];
-            for (let i = 0; i < alive.length; i++)
-              for (let j = i + 1; j < alive.length; j++) {
-                const a = alive[i].seat;
-                const b = alive[j].seat;
-                out.push({
-                  action: { type: 'non:resolve', target: a, target2: b },
-                  ui: {
-                    kind: 'button',
-                    label: '易容',
-                    targetSeats: [a, b],
-                    prompt: `查看并秘密交换 ${state.players[a].nickname} 与 ${state.players[b].nickname} 的身份`,
-                  },
-                });
-              }
-            return out;
-          }
-          case 'trick-gravedigger': {
-            const out: ActionChoice[] = state.discardPile
-              .map((d): ActionChoice[] => [
-                {
-                  action: { type: 'non:resolve', pick: d, mode: 'play' },
-                  ui: { kind: 'button', label: `打出·${CARDS[parseInst(d).id].name}`, prompt: `立即打出弃牌 ${CARDS[parseInst(d).id].name}` },
-                },
-                {
-                  action: { type: 'non:resolve', pick: d, mode: 'keep' },
-                  ui: { kind: 'button', label: `收下·${CARDS[parseInst(d).id].name}`, prompt: `将 ${CARDS[parseInst(d).id].name} 收入手牌` },
-                },
-              ])
-              .flat();
-            out.push({
-              action: { type: 'non:resolve', mode: 'skip' },
-              ui: { kind: 'button', label: '跳过', prompt: '不拿弃牌' },
-            });
-            return out;
-          }
-          default:
-            return [];
-        }
-      }
+      case 'night':
+        return nightChoices(state, seat);
       default:
         return [];
     }

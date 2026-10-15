@@ -473,4 +473,58 @@ describe('超时垫步与非法动作', () => {
     const final = playout(def, setup(6, 5), firstChoice);
     expect(def.isFinished(final)).toBe(true);
   });
+
+  it('死锁防护：需要目标的卡在无合法目标时自动跳过', () => {
+    // 3 人局：两个间谍结算后各杀一人，最后忍者的持有者是唯一存活者 → 无目标，应跳过而非卡死
+    let s = craftNight(3, { 0: ['blind-assassin#1', 'spy#1'], 1: ['blind-assassin#2', 'spy#2'], 2: ['shinobi#1', 'spy#3'] });
+    s = commitAll(s);
+    s = drainNight(s);
+    expect(s.phase === 'roundEnd' || s.phase === 'night').toBe(true);
+    // 全流程不抛错且能推进
+    while (s.phase === 'roundEnd') {
+      const a = def.auto(s);
+      expect(a.ok).toBe(true);
+      s = a.state;
+    }
+  });
+
+  it('掘墓人：无目标类牌（镜僧/殉道者/主谋）只能收下，不能立即打出', () => {
+    let s = craftNight(3, { 0: ['trick-gravedigger', 'spy#1'], 1: ['spy#2', 'spy#3'], 2: ['spy#4', 'spy#5'] });
+    s.discardPile = ['mirror-monk', 'blind-assassin#6'];
+    s = commitAll(s);
+    // 顺序：spy(1) → spy(2) → 掘墓人(0)
+    let r = def.applyAction(s, 1, { type: 'non:resolve', target: 0 });
+    s = r.state;
+    r = def.applyAction(s, 2, { type: 'non:resolve', target: 0 });
+    s = r.state;
+    // legalActions 不含镜僧的 play 选项，只含 keep
+    const choices = def.legalActions(s, 0);
+    const monkPlay = choices.find((c) => c.action.pick === 'mirror-monk' && c.action.mode === 'play');
+    const monkKeep = choices.find((c) => c.action.pick === 'mirror-monk' && c.action.mode === 'keep');
+    expect(monkPlay).toBeUndefined();
+    expect(monkKeep).toBeDefined();
+    // 直接发 play 动作被拒绝
+    expect(def.applyAction(s, 0, { type: 'non:resolve', pick: 'mirror-monk', mode: 'play' }).ok).toBe(false);
+    // 打出盲眼刺客仍然可行
+    r = def.applyAction(s, 0, { type: 'non:resolve', pick: 'blind-assassin#6', mode: 'play' });
+    expect(r.ok).toBe(true);
+  });
+});
+
+describe('模糊测试 · 大规模随机对局', () => {
+  for (let seed = 100; seed < 112; seed++) {
+    for (const n of [3, 5, 7]) {
+      it(`seed=${seed} n=${n} 全随机（含全部变体选项）推进到终局`, () => {
+        const rand = mulberry32(seed * 131 + n);
+        const final = playout(def, setup(n, seed), (_s, ch) => ch[rand.int(ch.length)]);
+        expect(def.isFinished(final)).toBe(true);
+        // 不变量：代币非负、终局有人达标
+        for (const p of final.players) {
+          const sum = p.tokens.reduce((a, b) => a + b, 0);
+          expect(sum).toBeGreaterThanOrEqual(0);
+        }
+        expect(final.players.some((p) => p.tokens.reduce((a, b) => a + b, 0) >= final.targetHonor)).toBe(true);
+      });
+    }
+  }
 });

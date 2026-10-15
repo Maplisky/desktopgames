@@ -24,6 +24,7 @@ export function getSocket(): Socket {
         break;
       case 'room':
         st().setRoom(m.room);
+        st().setLastErrorCode(null); // 成功收到房间视图 → 清除导航类错误码
         if (m.room.phase === 'lobby') audio.scene('lobby');
         else if (m.room.game?.id === 'night-of-ninja') audio.scene('night');
         break;

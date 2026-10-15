@@ -92,6 +92,13 @@ export default function NonTable() {
 
   const me = room?.players.find((p) => p.sessionId === token);
 
+  // 换人结算（或夜晚结束）时清空目标/操作方式选择，避免跨结算误用
+  const currentResolveSeat = view?.nightInfo?.currentSeat ?? null;
+  useEffect(() => {
+    setTargetMode(null);
+    setVariantChoice(null);
+  }, [currentResolveSeat, view?.nightInfo?.currentCardId]);
+
   /* ---------- 事件 → 动画/音效 ---------- */
   useEffect(() => {
     if (!lastEvents || lastEvents.rev <= lastRev.current) return;

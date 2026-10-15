@@ -238,6 +238,36 @@ describe('对局（人类 + 机器人）', () => {
     send(c1, { t: 'gameAction', seq: 1, action: { type: 'non:resolve', target: 1 } });
     await errP;
   });
+
+  it('seq 幂等：同一动作重发只生效一次', async () => {
+    const c1 = connect();
+    await hello(c1, '重发侠');
+    send(c1, { t: 'createRoom' });
+    send(c1, { t: 'addBot' });
+    send(c1, { t: 'addBot' });
+    await waitUntil(c1, (m) => m.t === 'room' && m.room.players.length === 3);
+    const syncs: any[] = [];
+    c1.on(SOCKET_EVENT, (raw: any) => {
+      if (raw.t === 'gameSync') syncs.push(raw.view);
+    });
+    send(c1, { t: 'startGame', gameId: 'night-of-ninja' });
+    const first = (await waitUntil(c1, (m) => m.t === 'gameSync')) as Extract<S2C, { t: 'gameSync' }>;
+    const view = first.view as any;
+    expect(view.phase).toBe('draft1');
+    // 同一 seq 发两次相同的选牌：第二次必须被静默忽略（手牌只加一张）
+    const cardId = view.you.draftPool[0];
+    send(c1, { t: 'gameAction', seq: 7, action: { type: 'non:draftPick', cardId } });
+    await waitUntil(c1, (m) => m.t === 'gameSync' && (m.view as any).you.picked);
+    send(c1, { t: 'gameAction', seq: 7, action: { type: 'non:draftPick', cardId } });
+    await sleep(1200); // 等机器人推进，期间收集所有 sync
+    // 选牌生效之后的每个视图里，我的手牌中该牌始终只有一张（重发未产生第二张）
+    const from = syncs.findIndex((s) => s.you.picked);
+    expect(from).toBeGreaterThanOrEqual(0);
+    for (const s of syncs.slice(from)) {
+      expect(s.you.hand.filter((c: string) => c === cardId).length).toBe(1);
+    }
+    expect(syncs.length).toBeGreaterThan(1);
+  }, 20000);
 });
 
 describe('站点口令', () => {
