@@ -101,7 +101,7 @@ function applyEffect(
   s: NonState,
   seat: number,
   cardId: string,
-  args: { target?: number; target2?: number; choice?: string },
+  args: { target?: number; target2?: number },
   events: GameEvent[],
 ) {
   const target = args.target !== undefined ? s.players[args.target] : null;
@@ -167,14 +167,6 @@ function applyEffect(
     }
     case 'blind-assassin': {
       attemptKill(s, events, seat, target!.seat);
-      break;
-    }
-    case 'shinobi': {
-      events.push(
-        ev('non:peek', { target: target!.seat, house: target!.identity.house, rank: target!.identity.rank }, [seat]),
-      );
-      if (args.choice === 'kill') attemptKill(s, events, seat, target!.seat);
-      else events.push(ev('non:spared', { seat: target!.seat }));
       break;
     }
     case 'mirror-monk':
@@ -386,6 +378,16 @@ function act(s: NonState, seat: number, action: { type: string } & Record<string
       const card = CARDS[cardId];
       const target = action.target !== undefined ? Number(action.target) : undefined;
       const target2 = action.target2 !== undefined ? Number(action.target2) : undefined;
+      // 忍者：先选窥视目标（定向事件），杀/放由 non:choose 决定 —— 还原实体规则「先看后选」
+      if (card.shinobiStyle) {
+        if (s.night.current.lockedTarget !== undefined) return { ok: false, reason: '已看过目标，请选择杀或放' };
+        if (target === undefined || !Number.isInteger(target)) return { ok: false, reason: '缺少目标' };
+        const t = s.players[target];
+        if (!t || t.seat === seat || !t.alive) return { ok: false, reason: '目标无效' };
+        events.push(ev('non:peek', { target: t.seat, house: t.identity.house, rank: t.identity.rank }, [seat]));
+        s.night.current.lockedTarget = target;
+        return null;
+      }
       if (card.targetKind !== 'none') {
         if (target === undefined || !Number.isInteger(target)) return { ok: false, reason: '缺少目标' };
         if (card.targetKind === 'anyAliveOther') {
@@ -398,9 +400,22 @@ function act(s: NonState, seat: number, action: { type: string } & Record<string
           if (!s.players[target2]?.alive || !s.players[target]?.alive) return { ok: false, reason: '目标无效' };
         }
       }
-      if (card.shinobiStyle && action.choice !== 'kill' && action.choice !== 'spare')
-        return { ok: false, reason: '需要选择杀或放' };
-      applyEffect(s, seat, cardId, { target, target2, choice: action.choice as string | undefined }, events);
+      applyEffect(s, seat, cardId, { target, target2 }, events);
+      s.night.current = null;
+      s.night.idx += 1;
+      advanceNight(s, events);
+      return null;
+    }
+    case 'non:choose': {
+      if (s.phase !== 'night' || !s.night?.current) return { ok: false, reason: '当前无需抉择' };
+      if (s.night.current.seat !== seat) return { ok: false, reason: '没轮到你结算' };
+      const card = CARDS[s.night.current.card];
+      const locked = s.night.current.lockedTarget;
+      if (!card.shinobiStyle || locked === undefined) return { ok: false, reason: '当前无需抉择' };
+      if (action.choice !== 'kill' && action.choice !== 'spare') return { ok: false, reason: '需要选择杀或放' };
+      if (!s.players[locked]?.alive) return { ok: false, reason: '目标已死亡' };
+      if (action.choice === 'kill') attemptKill(s, events, seat, locked);
+      else events.push(ev('non:spared', { seat: locked }));
       s.night.current = null;
       s.night.idx += 1;
       advanceNight(s, events);
@@ -555,11 +570,23 @@ export const nightOfNinja: GameDefinition<NonState> = {
             return others.map((t) => mk({ target: t }, '封印', `封印 ${state.players[t].nickname} 的卡牌效果`));
           case 'blind-assassin':
             return others.map((t) => mk({ target: t }, '刺杀', `杀死 ${state.players[t].nickname}`));
-          case 'shinobi':
-            return others.flatMap((t) => [
-              mk({ target: t, choice: 'kill' }, '忍者·杀', `查看并杀死 ${state.players[t].nickname}`),
-              mk({ target: t, choice: 'spare' }, '忍者·放', `查看并放过 ${state.players[t].nickname}`),
-            ]);
+          case 'shinobi': {
+            const locked = state.night!.current!.lockedTarget;
+            if (locked !== undefined) {
+              const name = state.players[locked]?.nickname ?? String(locked);
+              return [
+                {
+                  action: { type: 'non:choose', choice: 'kill' },
+                  ui: { kind: 'button', label: '忍者·杀', prompt: `杀死 ${name}` },
+                },
+                {
+                  action: { type: 'non:choose', choice: 'spare' },
+                  ui: { kind: 'button', label: '忍者·放', prompt: `放过 ${name}` },
+                },
+              ];
+            }
+            return others.map((t) => mk({ target: t }, '窥视', `查看 ${state.players[t].nickname} 的身份，再决定杀或放`));
+          }
           case 'trick-swap': {
             const alive = state.players.filter((q) => q.alive);
             const out: ActionChoice[] = [];
@@ -630,6 +657,7 @@ export const nightOfNinja: GameDefinition<NonState> = {
         ? {
             currentSeat: state.night.current?.seat ?? null,
             currentCardId: state.night.current?.card ?? null,
+            lockedTarget: state.night.current?.lockedTarget ?? null,
             resolvedCount: state.night.idx,
             total: state.night.order.length,
           }

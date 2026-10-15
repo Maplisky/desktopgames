@@ -12,6 +12,16 @@ import ChatPanel from '../../components/ChatPanel';
 const HOUSE_LABEL: Record<string, string> = { crane: '鹤之家', lotus: '莲之家', ronin: '浪人' };
 const HOUSE_SIGIL: Record<string, string> = { crane: '🕊️', lotus: '🪷', ronin: '⚔️' };
 
+/** 全流程阶段轨道（模拟实体桌游的回合流程板） */
+const PHASE_TRACK: Array<{ id: string; label: string }> = [
+  { id: 'deal', label: '身份分发' },
+  { id: 'draft1', label: '轮抽 · 壹' },
+  { id: 'draft2', label: '轮抽 · 贰' },
+  { id: 'commit', label: '暗选出牌' },
+  { id: 'night', label: '忍者之夜' },
+  { id: 'roundEnd', label: '回合结算' },
+];
+
 interface FxFlash {
   id: number;
   seat: number;
@@ -218,10 +228,30 @@ export default function NonTable() {
     const a = ((seat - mySeat) / n) * Math.PI * 2 + Math.PI / 2; // 我在正下方
     return { left: `${50 + 41 * Math.cos(a)}%`, top: `${44 + 33 * Math.sin(a)}%` };
   };
+  /** 公共区出牌位置：座位与桌面中心之间插值，形成中央卡环 */
+  const centerCardPos = (seat: number) => {
+    const a = ((seat - mySeat) / n) * Math.PI * 2 + Math.PI / 2;
+    const t = 0.56;
+    return { left: `${50 + 41 * t * Math.cos(a)}%`, top: `${44 + 33 * t * Math.sin(a)}%` };
+  };
+  const trackIdx =
+    view.phase === 'draft1'
+      ? 1
+      : view.phase === 'draft2'
+        ? 2
+        : view.phase === 'commit'
+          ? 3
+          : view.phase === 'night'
+            ? 4
+            : view.phase === 'roundEnd'
+              ? 5
+              : 6;
 
+  const locked = view.nightInfo?.lockedTarget ?? null;
   const myTurnToResolve = view.phase === 'night' && view.nightInfo?.currentSeat === mySeat;
   const currentCard = view.nightInfo?.currentCardId ? CARDS[view.nightInfo.currentCardId] : null;
-  const needsTarget = myTurnToResolve && currentCard && currentCard.targetKind !== 'none';
+  const needsTarget =
+    myTurnToResolve && !!currentCard && currentCard.targetKind !== 'none' && !(currentCard.shinobiStyle && locked !== null);
 
   const onSeatClick = (seat: number) => {
     if (!needsTarget || seat === mySeat) return;
@@ -234,19 +264,13 @@ export default function NonTable() {
       }
       return;
     }
-    if (cardId === 'shinobi') {
-      setTargetMode({ card: cardId, first: seat });
-      return;
-    }
+    // 含忍者：先发窥视（服务端随后弹出杀/放抉择）
     act({ type: 'non:resolve', target: seat });
   };
 
-  const targetableSeats =
-    needsTarget && targetMode?.card !== 'trick-swap'
-      ? view.players.filter((p) => p.alive && p.seat !== mySeat).map((p) => p.seat)
-      : needsTarget
-        ? view.players.filter((p) => p.alive && p.seat !== mySeat).map((p) => p.seat)
-        : [];
+  const targetableSeats = needsTarget
+    ? view.players.filter((p) => p.alive && p.seat !== mySeat).map((p) => p.seat)
+    : [];
 
   const phaseHint = () => {
     switch (view.phase) {
@@ -256,8 +280,11 @@ export default function NonTable() {
       case 'commit':
         return view.you.committed ? '已暗选，等其他忍者…' : '从手中暗选 1 张打出';
       case 'night':
-        if (view.nightInfo?.currentSeat === mySeat)
+        if (view.nightInfo?.currentSeat === mySeat) {
+          if (currentCard?.shinobiStyle && locked !== null)
+            return `已窥视 ${view.players.find((p) => p.seat === locked)?.nickname ?? ''} 的身份 · 选择杀或放`;
           return needsTarget ? `${currentCard?.name}：选择目标` : `${currentCard?.name} 生效中…`;
+        }
         return view.nightInfo?.currentSeat !== null && view.nightInfo?.currentSeat !== undefined
           ? `${view.players.find((p) => p.seat === view.nightInfo!.currentSeat)?.nickname} 正在行动…`
           : '夜风掠过…';
@@ -289,12 +316,43 @@ export default function NonTable() {
         </div>
       </div>
 
+      {/* 阶段轨道：全流程轮名称与当前位置（模拟实体流程板） */}
+      <div className="phase-track">
+        {PHASE_TRACK.map((p, i) => (
+          <div key={p.id} className={`track-step ${i < trackIdx ? 'done' : ''} ${i === trackIdx ? 'active' : ''}`}>
+            <span className="step-dot">{i < trackIdx ? '✓' : i + 1}</span>
+            <span className="step-label">{p.label}</span>
+            {i < PHASE_TRACK.length - 1 && <span className="step-arrow">›</span>}
+          </div>
+        ))}
+      </div>
+
       <div
         className="table-stage"
         ref={stageRef}
         onTouchStart={() => audio.unlock()}
       >
         <div className="table-felt" />
+
+        {/* 公共区：所有已打出的牌（暗置环绕中央，结算到谁则翻谁的） */}
+        {view.players.map((p) =>
+          p.hasCommitted || p.resolvedCard ? (
+            <div key={`cc-${p.seat}`} className={`center-card ${!p.alive ? 'dead' : ''}`} style={centerCardPos(p.seat)}>
+              <NinjaCard
+                cardId={p.resolvedCard ?? 'spy'}
+                faceDown={!p.resolvedCard}
+                width={54}
+                title={
+                  p.resolvedCard
+                    ? undefined
+                    : `${p.seat === mySeat ? '你' : p.nickname} 打出的牌（结算到时翻开）`
+                }
+              />
+              {p.negated && <span className="cc-negated">封</span>}
+              <span className="cc-owner">{p.seat === mySeat ? '我' : p.nickname}</span>
+            </div>
+          ) : null,
+        )}
         <div className="table-center">
           {view.phase === 'night' && currentCard && view.nightInfo?.currentSeat !== null && (
             <motion.div
@@ -356,18 +414,6 @@ export default function NonTable() {
                 )}
               </div>
               <div className="mini-cards">
-                {p.resolvedCard && <NinjaCard cardId={p.resolvedCard} width={30} />}
-                {!p.resolvedCard && p.hasCommitted && (
-                  <div className="card3d" style={{ ['--card-w' as never]: '30px' }}>
-                    <div className="inner">
-                      <div className="back">
-                        <span className="crest" style={{ fontSize: 12 }}>
-                          忍
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                )}
                 {p.seat !== mySeat &&
                   Array.from({ length: Math.max(0, p.handCount - (p.hasCommitted ? 1 : 0)) }).map((_, i) => (
                     <div
@@ -572,17 +618,17 @@ export default function NonTable() {
             )}
         </div>
 
-        {/* 忍者（先看后选）：杀/放 */}
-        {targetMode?.card === 'shinobi' && (
+        {/* 忍者两步结算：已窥视目标 → 杀/放抉择 */}
+        {myTurnToResolve && currentCard?.shinobiStyle && locked !== null && (
           <div className="hand-actions">
-            <button className="app-btn danger" onClick={() => act({ type: 'non:resolve', target: targetMode.first, choice: 'kill' })}>
+            <span className="hint" style={{ color: 'var(--gold)' }}>
+              已窥视 {view.players.find((p) => p.seat === locked)?.nickname} 的身份 →
+            </span>
+            <button className="app-btn danger" onClick={() => act({ type: 'non:choose', choice: 'kill' })}>
               杀
             </button>
-            <button className="app-btn" onClick={() => act({ type: 'non:resolve', target: targetMode.first, choice: 'spare' })}>
+            <button className="app-btn" onClick={() => act({ type: 'non:choose', choice: 'spare' })}>
               放
-            </button>
-            <button className="app-btn small" onClick={() => setTargetMode(null)}>
-              重选
             </button>
           </div>
         )}

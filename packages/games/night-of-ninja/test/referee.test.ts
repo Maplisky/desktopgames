@@ -333,10 +333,42 @@ describe('超时垫步与非法动作', () => {
       cur = s2.night!.current!;
     }
     expect(cur.card).toBe('shinobi');
-    const rr = def.applyTimeout(s2, cur.seat);
-    s2 = rr.state;
-    expect(rr.events.some((e) => e.type === 'non:spared' || e.type === 'non:peek')).toBe(true);
+    // 第一步超时：自动选目标（窥视事件只发给自己）
+    const rr1 = def.applyTimeout(s2, cur.seat);
+    s2 = rr1.state;
+    expect(rr1.events.some((e) => e.type === 'non:peek' && e.audience?.includes(1))).toBe(true);
+    expect(s2.night!.current!.lockedTarget).toBeDefined();
+    // 第二步超时：选择放过
+    const rr2 = def.applyTimeout(s2, cur.seat);
+    s2 = rr2.state;
+    expect(rr2.events.some((e) => e.type === 'non:spared')).toBe(true);
     expect(s2.players.every((p) => p.alive)).toBe(true);
+  });
+
+  it('忍者两步结算：先窥视目标，再决定杀', () => {
+    let s = craftNight(3, { 0: ['spy', 'spy'], 1: ['shinobi', 'spy'], 2: ['spy', 'spy'] });
+    s.players[1].identity = { house: 'crane', rank: 1 };
+    s.players[2].identity = { house: 'lotus', rank: 1 };
+    s = commitAll(s);
+    // 顺序：spy(0) → spy(2) → shinobi(1)
+    let r = def.applyAction(s, 0, { type: 'non:resolve', target: 1 });
+    s = r.state;
+    r = def.applyAction(s, 2, { type: 'non:resolve', target: 0 });
+    s = r.state;
+    expect(s.night!.current!.seat).toBe(1);
+    // 第一步：选目标 → 只发窥视事件，未杀死任何人
+    r = def.applyAction(s, 1, { type: 'non:resolve', target: 2 });
+    s = r.state;
+    expect(r.events.some((e) => e.type === 'non:peek' && e.audience?.includes(1))).toBe(true);
+    expect(s.players[2].alive).toBe(true);
+    expect(s.night!.current!.lockedTarget).toBe(2);
+    // 锁定后不允许再发 resolve 换目标
+    expect(def.applyAction(s, 1, { type: 'non:resolve', target: 0 }).ok).toBe(false);
+    // 第二步：杀
+    r = def.applyAction(s, 1, { type: 'non:choose', choice: 'kill' });
+    s = r.state;
+    expect(s.players[2].alive).toBe(false);
+    expect(r.events.some((e) => e.type === 'non:death')).toBe(true);
   });
 
   it('拒绝非法动作：不存在的牌、错误的座位、错误的阶段', () => {

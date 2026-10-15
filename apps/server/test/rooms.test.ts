@@ -144,9 +144,14 @@ describe('对局（人类 + 机器人）', () => {
       } else if (view.phase === 'commit' && !view.you.committed) {
         send(c1, { t: 'gameAction', seq: ++seq, action: { type: 'non:commit', cardId: view.you.hand[0] } });
       } else if (view.phase === 'night' && view.nightInfo?.currentSeat === view.you.seat) {
+        // 忍者已锁定目标 → 抉择（超时垫步偏好放过）；否则选目标
+        if (view.nightInfo.lockedTarget !== null && view.nightInfo.lockedTarget !== undefined) {
+          send(c1, { t: 'gameAction', seq: ++seq, action: { type: 'non:choose', choice: 'spare' } });
+          return;
+        }
         const others = view.players.filter((p: any) => p.alive && p.seat !== view.you.seat).map((p: any) => p.seat);
         if (others.length === 0) return;
-        const action: any = { type: 'non:resolve', target: others[0], choice: 'spare' };
+        const action: any = { type: 'non:resolve', target: others[0] };
         if (view.nightInfo.currentCardId === 'trick-swap') {
           if (others.length < 2) return; // 双目标不足，交给超时垫步
           action.target2 = others[1];

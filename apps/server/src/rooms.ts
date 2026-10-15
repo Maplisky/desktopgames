@@ -13,6 +13,7 @@ import {
 } from '@dg/protocol';
 import { mulberry32 } from '@dg/games-core';
 import { GAMES, MAX_ROOM_PLAYERS } from './games';
+import { BotBrain, chooseBotAction } from './bots';
 import { logger } from './log';
 
 const CODE_ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
@@ -56,6 +57,8 @@ export class Room {
   activityAt = Date.now();
   lastResult: RoomStateView['lastResult'] = null;
   botTimers = new Set<NodeJS.Timeout>();
+  /** 机器人头脑（sessionId → 情报与策略） */
+  readonly botBrains = new Map<string, BotBrain>();
 
   constructor(code: string, host: PlayerConn) {
     this.code = code;
@@ -357,6 +360,7 @@ export class RoomManager {
       s?.leave(this.roomKey(room.code));
       s?.emit(SOCKET_EVENT, { t: 'left', reason });
     }
+    room.botBrains.delete(player.sessionId);
     if (!gameRunning) {
       // 等待室阶段直接清理
     } else {
@@ -476,6 +480,10 @@ export class RoomManager {
     }));
     const state = def.setup(seats, def.defaultOptions, mulberry32(seed));
     room.game = { gameId, state, rev: 1, seed, phaseToken: '', deadline: null, autoTimer: null, replayPath: null };
+    room.botBrains.clear();
+    for (const s of seats) {
+      if (s.isBot) room.botBrains.set(s.sessionId, new BotBrain(s.sessionId, s.seat));
+    }
     if (this.opts.replayDir) {
       room.game.replayPath = this.replayPathFor(room);
       mkdir(this.opts.replayDir, { recursive: true }).catch(() => {});
@@ -503,6 +511,7 @@ export class RoomManager {
     room.phase = 'lobby';
     room.game = null;
     room.lastResult = null;
+    room.botBrains.clear();
     for (const p of room.players) p.ready = true;
     this.sendRoom(room);
   }
@@ -587,6 +596,11 @@ export class RoomManager {
     }, Math.max(50, delayMs * this.opts.autoDelayScale));
   }
 
+  private updateBotKnowledge(room: Room, events: GameEvent[]) {
+    if (room.botBrains.size === 0) return;
+    for (const brain of room.botBrains.values()) brain.observe(events);
+  }
+
   private scheduleBots(room: Room) {
     if (!room.game || room.phase !== 'playing') return;
     const def = GAMES[room.game.gameId];
@@ -602,7 +616,10 @@ export class RoomManager {
           if (!cur.activeSeats.includes(seat)) return;
           const choices = def.legalActions(room.game.state, seat);
           if (choices.length === 0) return;
-          const pick = choices[randomInt(choices.length)];
+          const brain = room.botBrains.get(player.sessionId);
+          const pick = brain
+            ? chooseBotAction(def, room.game.state, seat, brain, choices)
+            : choices[randomInt(choices.length)];
           const r = def.applyAction(room.game.state, seat, pick.action);
           if (!r.ok) return;
           room.game.state = r.state;
@@ -641,6 +658,7 @@ export class RoomManager {
   private broadcastEvents(room: Room, events: GameEvent[]) {
     const g = room.game!;
     g.rev += 1;
+    this.updateBotKnowledge(room, events); // 机器人先从事件流学习，再做决定
     const publicEvents = events.filter((e) => !e.audience || e.audience.length === 0);
     if (publicEvents.length > 0) {
       this.io.to(this.roomKey(room.code)).emit(SOCKET_EVENT, { t: 'gameEvents', rev: g.rev, events: publicEvents });

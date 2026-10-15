@@ -38,7 +38,8 @@ export interface NightState {
   order: Array<{ seat: number; card: string }>;
   idx: number;
   negated: number[];
-  current: { seat: number; card: string } | null;
+  /** 正在结算的牌；忍者的 lockedTarget = 已窥视并锁定的目标（等待杀/放抉择） */
+  current: { seat: number; card: string; lockedTarget?: number } | null;
 }
 
 export interface NonState {
@@ -90,7 +91,14 @@ export interface NonView {
   };
   players: NonViewPlayer[];
   draft: { pickNumber: 1 | 2; doneCount: number; total: number } | null;
-  nightInfo: { currentSeat: number | null; currentCardId: string | null; resolvedCount: number; total: number } | null;
+  nightInfo: {
+    currentSeat: number | null;
+    currentCardId: string | null;
+    /** 忍者已锁定的窥视目标（等待杀/放） */
+    lockedTarget: number | null;
+    resolvedCount: number;
+    total: number;
+  } | null;
   roundResult: RoundResult | null;
   winners: number[] | null;
   /** gameEnd 时公开全部荣誉 */
