@@ -293,11 +293,15 @@ export default function NonTable() {
     const a = ((seat - mySeat) / n) * Math.PI * 2 + Math.PI / 2; // 我在正下方
     return { left: `${50 + 41 * Math.cos(a)}%`, top: `${44 + 33 * Math.sin(a)}%` };
   };
-  /** 公共区出牌位置：座位与桌面中心之间插值，形成中央卡环 */
+  /** 公共区出牌位置：座位与桌面中心之间插值，形成中央卡环；按座位确定性微旋更自然 */
   const centerCardPos = (seat: number) => {
     const a = ((seat - mySeat) / n) * Math.PI * 2 + Math.PI / 2;
     const t = 0.56;
-    return { left: `${50 + 41 * t * Math.cos(a)}%`, top: `${44 + 33 * t * Math.sin(a)}%` };
+    return {
+      left: `${50 + 41 * t * Math.cos(a)}%`,
+      top: `${44 + 33 * t * Math.sin(a)}%`,
+      ['--rot' as never]: `${((seat * 47) % 13) - 6}deg`,
+    };
   };
   // 主轨道当前位置（九步）：夜晚阶段映射到 间谍(2)…忍者(6)
   const trackIdx =
