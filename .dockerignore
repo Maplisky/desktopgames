@@ -1,0 +1,10 @@
+node_modules
+dist
+coverage
+.tmp
+data
+.git
+.github
+*.local
+.env
+**/.mimosa

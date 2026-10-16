@@ -1,0 +1,4 @@
+# HTTP 模式（默认）：直接用 http://服务器IP 访问
+:80 {
+	reverse_proxy app:8787
+}

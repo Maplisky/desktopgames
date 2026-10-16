@@ -1,0 +1,4 @@
+# HTTPS 模式：把 example.com 换成你的域名（DNS A 记录指向服务器即可，自动签发证书）
+example.com {
+	reverse_proxy app:8787
+}

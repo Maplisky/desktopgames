@@ -39,6 +39,8 @@ pnpm build
 DG_STATIC_DIR=apps/web/dist node apps/server/dist/server.cjs   # 默认 8787
 ```
 
+服务器一键部署（Docker Compose + Caddy 自动 HTTPS）：见 [DEPLOY.md](DEPLOY.md)。
+
 环境变量：`DG_PORT`（端口）、`DG_PASSCODE`（站点入口口令）、`DG_REPLAY_DIR`（对局回放 JSONL 目录）、`DG_BOT_DELAY`（机器人思考毫秒）、`DG_CORS=1`（开发跨域）。
 
 ## 测试
