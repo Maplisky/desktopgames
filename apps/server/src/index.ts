@@ -29,6 +29,18 @@ httpServer.listen(PORT, () => {
   logger.info({ port: PORT, static: staticDir, passcode: !!process.env.DG_PASSCODE }, '桌游馆服务端已启动');
 });
 
+// 进程级守卫：任何未捕获异常/拒绝都必须留下痕迹（曾出现进程静默死亡且无日志）
+process.on('uncaughtException', (err) => {
+  logger.error({ err: String(err?.stack ?? err) }, 'uncaughtException');
+});
+process.on('unhandledRejection', (reason) => {
+  logger.error({ err: String(reason) }, 'unhandledRejection');
+});
+const heartbeat = setInterval(() => {
+  logger.debug({ rooms: io?.of('/').adapter?.rooms?.size ?? 0 }, 'heartbeat');
+}, 60_000);
+heartbeat.unref();
+
 const shutdown = (signal: string) => {
   logger.info({ signal }, 'shutting down');
   manager.destroy();

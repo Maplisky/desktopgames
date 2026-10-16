@@ -259,6 +259,51 @@ describe('对局（人类 + 机器人）', () => {
     await errP;
   });
 
+  it('对局中房主掉线：垫步接管推进，重连后可回到对局/结算', async () => {
+    const c1 = connect();
+    const token = await hello(c1, '房主');
+    const roomP = waitUntil(c1, (m) => m.t === 'room');
+    send(c1, { t: 'createRoom' });
+    await roomP;
+    send(c1, { t: 'addBot' });
+    await waitUntil(c1, (m) => m.t === 'room' && m.room.players.length === 2);
+    send(c1, { t: 'addBot' });
+    await waitUntil(c1, (m) => m.t === 'room' && m.room.players.length === 3);
+    send(c1, { t: 'startGame', gameId: 'night-of-ninja' });
+    await waitUntil(c1, (m) => m.t === 'gameSync');
+    c1.disconnect(); // 掉线：机器人 + 超时垫步接管
+
+    const c2 = connect();
+    await hello(c2, '房主', token); // 凭 token 重连
+    const seen = await waitUntil(
+      c2,
+      (m) => m.t === 'room' && (m.room.phase === 'result' || m.room.phase === 'playing'),
+      30000,
+    ).catch(() => null);
+    expect(seen).toBeTruthy();
+  }, 90000);
+
+  it('对局中非房主被踢：收到 left，房间继续存在', async () => {
+    const c1 = connect();
+    await hello(c1, '房主');
+    const roomP = waitUntil(c1, (m) => m.t === 'room');
+    send(c1, { t: 'createRoom' });
+    const room1 = ((await roomP) as Extract<S2C, { t: 'room' }>).room;
+    send(c1, { t: 'addBot' });
+    await waitUntil(c1, (m) => m.t === 'room' && m.room.players.length === 2);
+
+    const c2 = connect();
+    const t2 = await hello(c2, '路人');
+    send(c2, { t: 'joinRoom', code: room1.code });
+    await waitUntil(c1, (m) => m.t === 'room' && m.room.players.length === 3);
+
+    send(c1, { t: 'kick', sessionId: t2 });
+    const leftMsg = await waitUntil(c2, (m) => m.t === 'left');
+    expect(leftMsg.reason).toContain('移出');
+    // 房主视角：玩家减少
+    await waitUntil(c1, (m) => m.t === 'room' && m.room.players.length === 2);
+  });
+
   it('seq 幂等：同一动作重发只生效一次', async () => {
     const c1 = connect();
     await hello(c1, '重发侠');
