@@ -1,4 +1,4 @@
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { CARDS } from '@dg/games-night-of-ninja';
 
 const FLOW = [
@@ -25,11 +25,19 @@ const FLOW = [
 ];
 
 export default function Help() {
+  const navigate = useNavigate();
   const { gameId } = useParams();
+  const goBack = () => (window.history.length > 1 ? navigate(-1) : navigate('/'));
+  const backBtn = (
+    <button className="app-btn" onClick={goBack} style={{ alignSelf: 'flex-start' }}>
+      ← 返回
+    </button>
+  );
   if (gameId !== 'night-of-ninja') {
     return (
       <div className="page">
         <div className="help-wrap">
+          {backBtn}
           <div className="panel">暂无该游戏的说明。</div>
         </div>
       </div>
@@ -41,6 +49,7 @@ export default function Help() {
   return (
     <div className="page">
       <div className="help-wrap">
+        {backBtn}
         <div className="panel" style={{ padding: '26px 30px' }}>
           <h2 style={{ fontFamily: 'var(--font-display)', color: 'var(--gold)', marginTop: 0 }}>🥷 忍者之夜</h2>
           <p style={{ color: 'var(--text-dim)' }}>

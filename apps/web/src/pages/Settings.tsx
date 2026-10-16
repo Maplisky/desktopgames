@@ -1,13 +1,22 @@
+import { useNavigate } from 'react-router-dom';
 import { useGame } from '../store';
 import { audio } from '../audio';
 
 export default function Settings() {
+  const navigate = useNavigate();
   const prefs = useGame((s) => s.prefs);
   const setPrefs = useGame((s) => s.setPrefs);
 
   return (
     <div className="page">
       <div className="settings-wrap">
+        <button
+          className="app-btn"
+          style={{ alignSelf: 'flex-start' }}
+          onClick={() => (window.history.length > 1 ? navigate(-1) : navigate('/'))}
+        >
+          ← 返回
+        </button>
         <div className="panel">
           <h3 style={{ marginTop: 0, color: 'var(--gold)', fontFamily: 'var(--font-display)' }}>声音与画面</h3>
           <div className="setting-row">
