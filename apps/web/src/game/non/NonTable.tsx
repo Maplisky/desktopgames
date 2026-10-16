@@ -429,6 +429,15 @@ export default function NonTable() {
           >
             📋 流程卡
           </button>
+          <button
+            className="app-btn small danger"
+            onClick={() => {
+              if (window.confirm('确定离开本局吗？你的忍者将由超时自动行动。')) send({ t: 'leaveRoom' });
+            }}
+            title="离开房间并回到大厅"
+          >
+            🚪 离开
+          </button>
         </div>
       </div>
 
