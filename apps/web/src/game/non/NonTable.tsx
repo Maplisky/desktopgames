@@ -8,6 +8,7 @@ import { send } from '../../net/client';
 import { audio } from '../../audio';
 import { NinjaCard } from '../../components/NinjaCard';
 import FlowCard from '../../components/FlowCard';
+import Avatar from '../../components/Avatar';
 import ChatPanel from '../../components/ChatPanel';
 
 const HOUSE_LABEL: Record<string, string> = { crane: '鹤之家', lotus: '莲之家', ronin: '浪人' };
@@ -419,7 +420,7 @@ export default function NonTable() {
           </span>
           {me && (
             <span className="identity-badge" style={{ marginLeft: 8, fontFamily: 'var(--font-body)' }}>
-              {me.avatar} {me.nickname}
+              <Avatar avatar={me.avatar} size={16} /> {me.nickname}
             </span>
           )}
           <button
@@ -525,7 +526,9 @@ export default function NonTable() {
               data-seat={p.seat}
               onClick={() => onSeatClick(p.seat)}
             >
-              <div className="avatar-orb">{seatPlayer?.avatar ?? '🥷'}</div>
+              <div className="avatar-orb">
+                <Avatar avatar={seatPlayer?.avatar ?? '🥷'} size={30} />
+              </div>
               <div className="nick">
                 {p.seat === mySeat ? '我' : p.nickname}
                 {seatPlayer && !seatPlayer.connected && !p.isBot ? ' ·掉线' : ''}
@@ -627,7 +630,9 @@ export default function NonTable() {
                     return (
                       <div key={s.seat} className={`standing-row ${winners.includes(s.seat) ? 'winner' : ''}`}>
                         <span className="standing-medal">{winners.includes(s.seat) ? '🏆' : medal}</span>
-                        <span>{room.players.find((r) => r.seat === s.seat)?.avatar ?? ''}</span>
+                        <span>
+                          <Avatar avatar={room.players.find((r) => r.seat === s.seat)?.avatar ?? '🥷'} size={22} />
+                        </span>
                         <span style={{ flex: 1, textAlign: 'left' }}>{s.nickname}</span>
                         <span className={`identity-badge ${s.identity.house}`}>
                           {s.identity.house === 'ronin' ? '浪人' : `${HOUSE_LABEL[s.identity.house]}·${s.identity.rank}`}

@@ -1,9 +1,18 @@
 import { z } from 'zod';
 
-/** 玩家档案（MVP 无账号，客户端本地保存） */
+/** 玩家档案（MVP 无账号，客户端本地保存）。
+ * avatar：表情字符串（≤8 字符）或本地缩放后的图片 data URL（≤20000 字符）。 */
 export const PROFILE_SCHEMA = z.object({
   nickname: z.string().trim().min(1).max(16),
-  avatar: z.string().trim().min(1).max(8),
+  avatar: z
+    .string()
+    .trim()
+    .min(1)
+    .max(20000)
+    .refine(
+      (v) => v.length <= 8 || /^data:image\/(png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/.test(v),
+      '头像须为表情或图片数据',
+    ),
 });
 export type Profile = z.infer<typeof PROFILE_SCHEMA>;
 

@@ -1,11 +1,43 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useGame } from '../store';
 import { send } from '../net/client';
 import { audio } from '../audio';
+import Avatar from '../components/Avatar';
 
 const AVATARS = ['🐱', '🐶', '🦊', '🐼', '🐸', '🦉', '🐺', '🦜', '🐙', '🦁', '🐯', '🦝'];
 const ADJ = ['影', '月', '风', '雪', '焰', '雷', '霜', '夜'];
+
+/** 图片缩放为 96×96 封面裁剪的 JPEG data URL */
+function fileToAvatarDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const S = 96;
+      const canvas = document.createElement('canvas');
+      canvas.width = S;
+      canvas.height = S;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        URL.revokeObjectURL(url);
+        reject(new Error('canvas 不可用'));
+        return;
+      }
+      const ratio = Math.max(S / img.width, S / img.height);
+      const w = img.width * ratio;
+      const h = img.height * ratio;
+      ctx.drawImage(img, (S - w) / 2, (S - h) / 2, w, h);
+      URL.revokeObjectURL(url);
+      resolve(canvas.toDataURL('image/jpeg', 0.82));
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('图片读取失败'));
+    };
+    img.src = url;
+  });
+}
 
 export default function Lobby() {
   const profile = useGame((s) => s.profile);
@@ -16,7 +48,21 @@ export default function Lobby() {
   const pushToast = useGame((s) => s.pushToast);
   const [joinCode, setJoinCode] = useState('');
   const [pc, setPc] = useState(passcode ?? '');
+  const [avatarErr, setAvatarErr] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
+
+  const onAvatarFile = async (file: File | undefined) => {
+    if (!file) return;
+    try {
+      const dataUrl = await fileToAvatarDataUrl(file);
+      setAvatarErr(null);
+      setProfile({ ...profile, avatar: dataUrl });
+      audio.sfx('token');
+    } catch {
+      setAvatarErr('图片读取失败，换一张试试');
+    }
+  };
 
   const randomName = () => {
     const nick = `无名${ADJ[Math.floor(Math.random() * ADJ.length)]}${Math.floor(Math.random() * 90 + 10)}`;
@@ -120,7 +166,28 @@ export default function Lobby() {
                   {a}
                 </button>
               ))}
+              <label
+                className={`avatar-upload ${profile.avatar.startsWith('data:image') ? 'sel' : ''}`}
+                title="上传自定义头像（自动裁剪为方形）"
+              >
+                {profile.avatar.startsWith('data:image') ? (
+                  <Avatar avatar={profile.avatar} size={26} />
+                ) : (
+                  <span style={{ fontSize: 16 }}>⬆️</span>
+                )}
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept="image/*"
+                  style={{ display: 'none' }}
+                  onChange={(e) => {
+                    void onAvatarFile(e.target.files?.[0]);
+                    e.currentTarget.value = ''; // 允许重复选择同一文件
+                  }}
+                />
+              </label>
             </div>
+            {avatarErr && <div style={{ color: 'var(--danger)', fontSize: 13 }}>{avatarErr}</div>}
           </div>
 
           <div className="panel lobby-card">

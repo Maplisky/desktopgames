@@ -294,6 +294,38 @@ input.app-input::placeholder {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
+  align-items: center;
+}
+
+/* 自定义图片头像 */
+.avatar-img {
+  border-radius: 50%;
+  object-fit: cover;
+  display: inline-block;
+  vertical-align: middle;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+.avatar-upload {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  border: 1px dashed var(--gold-dim);
+  background: rgba(240, 205, 138, 0.05);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--gold);
+  transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+.avatar-upload:hover {
+  border-color: var(--gold);
+  background: rgba(240, 205, 138, 0.12);
+}
+.avatar-upload.sel {
+  border-style: solid;
+  border-color: var(--gold);
+  background: rgba(240, 205, 138, 0.12);
 }
 .avatar-pick button {
   font-size: 22px;

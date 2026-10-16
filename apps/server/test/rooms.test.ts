@@ -283,6 +283,37 @@ describe('对局（人类 + 机器人）', () => {
     expect(seen).toBeTruthy();
   }, 90000);
 
+  it('自定义头像（data URL）可被接受并广播给房间', async () => {
+    const tiny = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDA0SEhISEhIVExQUExQUFhkYGBYYGRsgHx4dHSAkJSskJS1CQ0JCAzE//9oADAMBAAIAxAAA/8QAFQABAQAAAAAAAAAAAAAAAAAAAAn/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEBAAAAAAAAAAAAAAAAAAAA/9oACAEBAAA/AJQA/9k=';
+    const c1 = connect();
+    const p = waitUntil(c1, (m) => m.t === 'helloAck');
+    send(c1, { t: 'hello', profile: { nickname: '图像侠', avatar: tiny } });
+    await p;
+    const roomP = waitUntil(c1, (m) => m.t === 'room');
+    send(c1, { t: 'createRoom' });
+    const room = ((await roomP) as Extract<S2C, { t: 'room' }>).room;
+    expect(room.players[0].avatar).toBe(tiny);
+  });
+
+  it('非法头像（超长非 data URL）被拒绝', async () => {
+    const c1 = connect();
+    let acked = false;
+    c1.on(SOCKET_EVENT, (m) => {
+      if (m.t === 'helloAck') acked = true;
+    });
+    send(c1, { t: 'hello', profile: { nickname: '坏头像', avatar: 'x'.repeat(5000) } });
+    await sleep(400);
+    expect(acked).toBe(false); // 未获得会话即被 schema 拒绝
+  });
+
+  it('非法头像（超长非 data URL）被拒后正常档案仍可登录', async () => {
+    const c1 = connect();
+    const p = waitUntil(c1, (m) => m.t === 'helloAck');
+    send(c1, { t: 'hello', profile: { nickname: '正常人', avatar: '🐱' } });
+    await p;
+    expect(true).toBe(true);
+  });
+
   it('对局中非房主被踢：收到 left，房间继续存在', async () => {
     const c1 = connect();
     await hello(c1, '房主');

@@ -5,6 +5,7 @@ import { useGame } from '../store';
 import { send } from '../net/client';
 import { audio } from '../audio';
 import ChatPanel from '../components/ChatPanel';
+import Avatar from '../components/Avatar';
 import NonTable from '../game/non/NonTable';
 
 export default function Room() {
@@ -90,7 +91,9 @@ export default function Room() {
             <div className="players-grid">
               {room.players.map((p) => (
                 <div key={p.sessionId} className={`player-chip ${p.connected ? '' : 'disconnected'}`}>
-                  <span className="avatar">{p.avatar}</span>
+                  <span className="avatar">
+                    <Avatar avatar={p.avatar} size={28} />
+                  </span>
                   <span className="info">
                     <div className="nick">
                       {p.sessionId === room.hostSessionId && <span className="crown">👑 </span>}
