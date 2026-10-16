@@ -610,18 +610,25 @@ export default function NonTable() {
         {/* 终局结算 */}
         {room.phase === 'result' && view.standings && (
           <div className="result-overlay">
-            <div className="panel result-card">
+            <motion.div
+              className="panel result-card"
+              initial={{ scale: 0.85, opacity: 0, y: 24 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              transition={{ type: 'spring', stiffness: 260, damping: 24 }}
+            >
               <h2>夜幕落下</h2>
               <div className="standings">
                 {view.standings
                   .slice()
                   .sort((a, b) => b.honor - a.honor)
-                  .map((s) => {
+                  .map((s, idx) => {
                     const winners = view.winners ?? [];
+                    const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `#${idx + 1}`;
                     return (
                       <div key={s.seat} className={`standing-row ${winners.includes(s.seat) ? 'winner' : ''}`}>
+                        <span className="standing-medal">{winners.includes(s.seat) ? '🏆' : medal}</span>
                         <span>{room.players.find((r) => r.seat === s.seat)?.avatar ?? ''}</span>
-                        <span style={{ flex: 1 }}>{s.nickname}</span>
+                        <span style={{ flex: 1, textAlign: 'left' }}>{s.nickname}</span>
                         <span className={`identity-badge ${s.identity.house}`}>
                           {s.identity.house === 'ronin' ? '浪人' : `${HOUSE_LABEL[s.identity.house]}·${s.identity.rank}`}
                         </span>
@@ -640,7 +647,7 @@ export default function NonTable() {
               <button className="app-btn" style={{ marginTop: 10 }} onClick={() => send({ t: 'leaveRoom' })}>
                 离开
               </button>
-            </div>
+            </motion.div>
           </div>
         )}
       </div>

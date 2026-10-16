@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { NON_MAX_PLAYERS } from '@dg/games-night-of-ninja';
 import { useGame } from '../store';
 import { send } from '../net/client';
 import { audio } from '../audio';
@@ -82,7 +83,9 @@ export default function Room() {
           <div className="panel" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
             <div style={{ padding: '14px 18px 0', display: 'flex', alignItems: 'center', gap: 10 }}>
               <h3 style={{ margin: 0, color: 'var(--gold)', fontFamily: 'var(--font-display)' }}>等待室</h3>
-              <span style={{ color: 'var(--text-dim)', fontSize: 13 }}>{room.players.length} 人在座</span>
+              <span style={{ color: 'var(--text-dim)', fontSize: 13 }}>
+                {room.players.length} 人在座 · 还可加入 {Math.max(0, NON_MAX_PLAYERS - room.players.length)} 人
+              </span>
             </div>
             <div className="players-grid">
               {room.players.map((p) => (
