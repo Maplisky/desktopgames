@@ -274,7 +274,7 @@ function applyEffect(
     case 'trick-judge': {
       me.exposed = true;
       events.push(ev('non:exposed', { seat: me.seat, house: me.identity.house, rank: me.identity.rank }));
-      if (target) killNow(s, events, seat, target.seat, true); // 审判官无视镜僧/殉道者
+      if (target) killNow(s, events, seat, target.seat); // 审判官无视镜僧/殉道者
       break;
     }
     case 'blind-assassin':
@@ -294,7 +294,7 @@ function announceKill(s: NonState, events: GameEvent[], attacker: number, target
 }
 
 /** 无视反应的直接击杀（审判官） */
-function killNow(s: NonState, events: GameEvent[], attacker: number, targetSeat: number, _bypass: boolean) {
+function killNow(s: NonState, events: GameEvent[], attacker: number, targetSeat: number) {
   const t = s.players[targetSeat];
   if (!t.alive) return;
   events.push(ev('non:judged', { target: targetSeat }));

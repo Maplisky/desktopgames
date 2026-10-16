@@ -51,7 +51,7 @@ interface DGStore {
   setConnected: (c: boolean) => void;
   setPasscodeNeeded: (n: boolean) => void;
   setRoom: (r: RoomStateView | null) => void;
-  setGameView: (v: NonView | null, rev: number) => void;
+  setGameView: (v: NonView | null) => void;
   pushEvents: (rev: number, events: GameEvent[]) => void;
   pushToast: (t: Omit<Toast, 'id'>) => void;
   dismissToast: (id: number) => void;

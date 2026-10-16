@@ -8,7 +8,7 @@ import Avatar from '../components/Avatar';
 const AVATARS = ['🐱', '🐶', '🦊', '🐼', '🐸', '🦉', '🐺', '🦜', '🐙', '🦁', '🐯', '🦝'];
 const ADJ = ['影', '月', '风', '雪', '焰', '雷', '霜', '夜'];
 
-/** 图片缩放为 96×96 封面裁剪的 JPEG data URL */
+/** 图片缩放为 96×96 封面裁剪的 JPEG data URL（质量递减直到满足协议上限） */
 function fileToAvatarDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
@@ -29,7 +29,15 @@ function fileToAvatarDataUrl(file: File): Promise<string> {
       const h = img.height * ratio;
       ctx.drawImage(img, (S - w) / 2, (S - h) / 2, w, h);
       URL.revokeObjectURL(url);
-      resolve(canvas.toDataURL('image/jpeg', 0.82));
+      // 协议上限 20000 字符：常规图 0.82 即可，高噪声图逐级降质兜底
+      for (const q of [0.82, 0.7, 0.55, 0.4]) {
+        const dataUrl = canvas.toDataURL('image/jpeg', q);
+        if (dataUrl.length <= 19000) {
+          resolve(dataUrl);
+          return;
+        }
+      }
+      resolve(canvas.toDataURL('image/jpeg', 0.3));
     };
     img.onerror = () => {
       URL.revokeObjectURL(url);

@@ -20,13 +20,9 @@ export type Profile = z.infer<typeof PROFILE_SCHEMA>;
 export const GAME_ACTION_SCHEMA = z.object({ type: z.string().min(1) }).passthrough();
 export type GameAction = z.infer<typeof GAME_ACTION_SCHEMA>;
 
-/** 游戏事件：裁判产出，用于客户端动画/音效；audience 为空表示广播全体 */
-export interface GameEvent {
-  type: string;
-  payload?: Record<string, unknown>;
-  /** 目标座位号；缺省 = 全员可见 */
-  audience?: number[];
-}
+/** 游戏事件类型以 @dg/games-core 的定义为准（此处仅转发，保持单一来源） */
+export type { GameEvent } from '@dg/games-core';
+import type { GameEvent } from '@dg/games-core';
 
 export const CHAT_MSG_SCHEMA = z.object({
   sessionId: z.string(),

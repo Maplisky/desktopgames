@@ -29,7 +29,7 @@ export function getSocket(): Socket {
         else if (m.room.game?.id === 'night-of-ninja') audio.scene('night');
         break;
       case 'gameSync':
-        st().setGameView(m.view as never, m.rev);
+        st().setGameView(m.view as never);
         if (typeof m.lastSeq === 'number') st().noteLastSeq(m.lastSeq);
         break;
       case 'gameEvents':
