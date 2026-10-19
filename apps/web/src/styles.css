@@ -54,6 +54,7 @@ html,
 body,
 #root {
   height: 100%;
+  height: 100dvh;
   margin: 0;
 }
 body {
@@ -1535,6 +1536,189 @@ input[type='range'] {
 }
 .help-card b {
   color: var(--gold);
+}
+
+/* ============ 手机竖屏布局（≤700px） ============ */
+@media (max-width: 700px) {
+  .page {
+    padding: 10px;
+  }
+  .game-topbar {
+    flex-wrap: wrap;
+    gap: 6px 10px;
+    padding: 6px 10px;
+    font-size: 12px;
+  }
+  .game-topbar .phase {
+    font-size: 14px;
+    padding: 2px 9px;
+  }
+  .phase-track {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    justify-content: flex-start;
+    padding: 6px 10px 4px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .phase-track::-webkit-scrollbar {
+    display: none;
+  }
+  .track-step {
+    flex: none;
+  }
+  .step-arrow {
+    margin: 0 3px;
+  }
+
+  /* 竖屏牌桌：对手横排条 + 中央结算 + 公共牌横滚 */
+  .table-stage.portrait {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 8px;
+    margin: 4px 8px;
+    overflow: hidden auto;
+    min-height: 0;
+  }
+  .table-stage.portrait .table-felt {
+    inset: 0;
+    border-radius: 22px;
+    opacity: 0.5;
+  }
+  .table-stage.portrait .table-felt::before,
+  .table-stage.portrait .table-felt::after {
+    display: none;
+  }
+  .table-stage.portrait .table-center {
+    position: static;
+    transform: none;
+  }
+  .m-strip {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding: 8px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .m-strip::-webkit-scrollbar {
+    display: none;
+  }
+  .m-seat {
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    width: 68px;
+    padding: 7px 4px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid transparent;
+    transition: border-color 0.3s ease, box-shadow 0.3s ease;
+  }
+  .m-seat .nick {
+    font-size: 11px;
+    max-width: 64px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .m-seat .tags {
+    display: flex;
+    gap: 3px;
+    font-size: 10px;
+    min-height: 14px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .m-seat.dead {
+    filter: grayscale(1) brightness(0.6);
+  }
+  .m-seat.active-turn {
+    border-color: var(--accent);
+    box-shadow: 0 0 14px rgba(212, 106, 90, 0.5);
+  }
+  .m-seat.targetable {
+    border-color: var(--danger);
+    box-shadow: 0 0 14px rgba(224, 92, 92, 0.5);
+    cursor: pointer;
+  }
+  .m-seat.target-picked {
+    outline: 2px solid var(--danger);
+  }
+  .m-played {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding: 4px 8px 8px;
+    min-height: 86px;
+    align-items: flex-end;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .m-played::-webkit-scrollbar {
+    display: none;
+  }
+  .m-played-item {
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    font-size: 10px;
+    color: var(--text-dim);
+  }
+  .m-played-item.dead {
+    filter: grayscale(1) brightness(0.7);
+  }
+
+  /* 手牌区竖屏 */
+  .my-hand {
+    min-height: 0;
+    padding: 6px 10px 10px;
+  }
+  .hand-groups {
+    gap: 14px;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+  .hand-groups .cards-row {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  /* 结果浮层窄屏 */
+  .result-card {
+    width: 94vw;
+    padding: 20px 16px;
+  }
+  .standing-row {
+    font-size: 13px;
+    padding: 5px 8px;
+  }
+
+  /* 流程卡/大厅微调 */
+  .lobby-hero {
+    padding: 22px 18px;
+    gap: 16px;
+  }
+  .lobby-hero h1 {
+    font-size: 27px;
+    letter-spacing: 5px;
+  }
+  .room-code-panel {
+    padding: 14px 16px;
+  }
+  .room-code-panel .code {
+    font-size: 30px;
+    letter-spacing: 7px;
+  }
 }
 
 /* ============ 响应式 ============ */

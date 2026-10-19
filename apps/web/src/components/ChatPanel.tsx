@@ -14,7 +14,13 @@ interface ChatUiState {
 }
 
 function defaultUi(): ChatUiState {
-  return { x: Math.max(8, window.innerWidth - PANEL_W - 16), y: 70, collapsed: false };
+  // 手机竖屏默认收起，避免遮挡牌桌
+  const collapsedDefault = window.innerWidth < 700;
+  return {
+    x: Math.max(8, window.innerWidth - PANEL_W - 16),
+    y: 70,
+    collapsed: collapsedDefault,
+  };
 }
 
 function loadUi(): ChatUiState {
@@ -23,6 +29,10 @@ function loadUi(): ChatUiState {
     if (raw) {
       const p = JSON.parse(raw) as ChatUiState;
       if (typeof p.x === 'number' && typeof p.y === 'number') {
+        // 记忆位置来自其他设备/视口（超出当前屏幕）→ 视为首访
+        if (p.x > window.innerWidth - 40) {
+          return defaultUi();
+        }
         return {
           x: Math.max(4, Math.min(window.innerWidth - 80, p.x)),
           y: Math.max(4, Math.min(window.innerHeight - 60, p.y)),

@@ -109,6 +109,17 @@ export default function NonTable() {
   const [variantChoice, setVariantChoice] = useState<string | null>(null);
   const [showFlow, setShowFlow] = useState(false);
 
+  // 手机竖屏布局（≤700px）：对手横排条 + 中央结算，替代椭圆牌桌
+  const [portrait, setPortrait] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia('(max-width: 700px)').matches,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 700px)');
+    const on = () => setPortrait(mq.matches);
+    mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
+  }, []);
+
   const me = room?.players.find((p) => p.sessionId === token);
 
   // 换人结算（或夜晚结束）时清空目标/操作方式选择，避免跨结算误用
@@ -403,6 +414,48 @@ export default function NonTable() {
     }
   };
 
+  // 中央结算区内容（桌面与手机竖屏共用）
+  const centerInner = (
+    <div className="table-center">
+      {view.phase === 'night' && currentCard && view.nightInfo?.currentSeat !== null && (
+        <motion.div
+          key={`${view.round}-${view.nightInfo?.currentSeat}-${view.nightInfo?.currentCardId}`}
+          initial={{ scale: 0.5, opacity: 0, rotate: -8 }}
+          animate={{ scale: 1, opacity: 1, rotate: 0 }}
+        >
+          <NinjaCard
+            cardId={
+              view.players.find((p) => p.seat === view.nightInfo!.currentSeat)?.played.slice(-1)[0] ??
+              view.nightInfo!.currentCardId!
+            }
+            width={portrait ? 92 : 118}
+          />
+          <div style={{ textAlign: 'center', fontSize: 13, color: 'var(--text-dim)', marginTop: 6 }}>
+            {view.players.find((p) => p.seat === view.nightInfo!.currentSeat)?.nickname}
+          </div>
+        </motion.div>
+      )}
+      {view.phase === 'roundEnd' && view.roundResult && (
+        <motion.div initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} style={{ textAlign: 'center' }}>
+          <div style={{ fontSize: portrait ? 44 : 56 }}>{HOUSE_SIGIL[view.roundResult.winner] ?? '🌙'}</div>
+          <div style={{ fontFamily: 'var(--font-display)', fontSize: 22, color: 'var(--gold)' }}>
+            {view.roundResult.winner === 'none' ? '无人得分' : `${HOUSE_LABEL[view.roundResult.winner]} 胜`}
+          </div>
+          {view.roundResult.mastermindSeat !== null && (
+            <div style={{ fontSize: 13, color: 'var(--text-dim)' }}>主谋翻盘！</div>
+          )}
+        </motion.div>
+      )}
+      {(view.phase === 'draft1' || view.phase === 'draft2') && (
+        <div style={{ fontSize: portrait ? 40 : 54, opacity: 0.85 }}>🌙</div>
+      )}
+      <div className="phase-hint">{phaseHint()}</div>
+    </div>
+  );
+
+  /** 手机竖屏下卡片统一缩放 */
+  const cw = (base: number) => (portrait ? Math.round(base * 0.72) : base);
+
   return (
     <div className="table-page">
       <div className="game-topbar">
@@ -459,106 +512,126 @@ export default function NonTable() {
       </div>
 
       <div
-        className="table-stage"
+        className={`table-stage ${portrait ? 'portrait' : ''}`}
         ref={stageRef}
         onTouchStart={() => audio.unlock()}
       >
         <div className="table-felt" />
 
-        {/* 公共区：亮出的牌面朝上环绕中央（打出即公开） */}
-        {view.players.map((p) =>
-          p.played.length > 0 ? (
-            <div key={`cc-${p.seat}`} className={`center-card ${!p.alive ? 'dead' : ''}`} style={centerCardPos(p.seat)}>
-              <NinjaCard cardId={p.played[p.played.length - 1]} width={54} />
-              {p.played.length > 1 && <span className="cc-count">×{p.played.length}</span>}
-              <span className="cc-owner">{p.seat === mySeat ? '我' : p.nickname}</span>
-            </div>
-          ) : null,
-        )}
-        <div className="table-center">
-          {view.phase === 'night' && currentCard && view.nightInfo?.currentSeat !== null && (
-            <motion.div
-              key={`${view.round}-${view.nightInfo?.currentSeat}-${view.nightInfo?.currentCardId}`}
-              initial={{ scale: 0.5, opacity: 0, rotate: -8 }}
-              animate={{ scale: 1, opacity: 1, rotate: 0 }}
-            >
-              <NinjaCard
-                cardId={
-                  view.players.find((p) => p.seat === view.nightInfo!.currentSeat)?.played.slice(-1)[0] ??
-                  view.nightInfo!.currentCardId!
-                }
-                width={118}
-              />
-              <div style={{ textAlign: 'center', fontSize: 13, color: 'var(--text-dim)', marginTop: 6 }}>
-                {view.players.find((p) => p.seat === view.nightInfo!.currentSeat)?.nickname}
-              </div>
-            </motion.div>
-          )}
-          {view.phase === 'roundEnd' && view.roundResult && (
-            <motion.div initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: 56 }}>{HOUSE_SIGIL[view.roundResult.winner] ?? '🌙'}</div>
-              <div style={{ fontFamily: 'var(--font-display)', fontSize: 22, color: 'var(--gold)' }}>
-                {view.roundResult.winner === 'none' ? '无人得分' : `${HOUSE_LABEL[view.roundResult.winner]} 胜`}
-              </div>
-              {view.roundResult.mastermindSeat !== null && (
-                <div style={{ fontSize: 13, color: 'var(--text-dim)' }}>主谋翻盘！</div>
-              )}
-            </motion.div>
-          )}
-          {(view.phase === 'draft1' || view.phase === 'draft2') && <div style={{ fontSize: 54, opacity: 0.85 }}>🌙</div>}
-          <div className="phase-hint">{phaseHint()}</div>
-        </div>
-
-        {/* 座位环 */}
-        {view.players.map((p) => {
-          const seatPlayer = room.players.find((r) => r.seat === p.seat);
-          const shownId = p.exposedIdentity ?? p.revealedIdentity;
-          const isCurrent = view.nightInfo?.currentSeat === p.seat;
-          return (
-            <div
-              key={p.seat}
-              className={`seat ${p.seat === mySeat ? 'me' : ''} ${!p.alive ? 'dead' : ''} ${
-                isCurrent ? 'active-turn' : ''
-              } ${targetableSeats.includes(p.seat) ? 'targetable' : ''} ${
-                targetMode?.first === p.seat ? 'target-picked' : ''
-              }`}
-              style={seatPos(p.seat)}
-              data-seat={p.seat}
-              onClick={() => onSeatClick(p.seat)}
-            >
-              <div className="avatar-orb">
-                <Avatar avatar={seatPlayer?.avatar ?? '🥷'} size={30} />
-              </div>
-              <div className="nick">
-                {p.seat === mySeat ? '我' : p.nickname}
-                {seatPlayer && !seatPlayer.connected && !p.isBot ? ' ·掉线' : ''}
-              </div>
-              <div className="tags">
-                {p.tokenCount > 0 && <span title={`持有 ${p.tokenCount} 枚荣誉代币`}>🏵️{p.tokenCount}</span>}
-                {shownId && (
-                  <span className={`identity-badge ${shownId.house}`}>
-                    {shownId.house === 'ronin' ? '浪人' : `第${shownId.rank}席`}
-                  </span>
-                )}
-              </div>
-              <div className="mini-cards">
-                {p.seat !== mySeat &&
-                  Array.from({ length: Math.max(0, p.handCount) }).map((_, i) => (
+        {portrait ? (
+          <>
+            {/* 手机竖屏：对手横排条 */}
+            <div className="m-strip">
+              {view.players
+                .filter((p) => p.seat !== mySeat)
+                .map((p) => {
+                  const seatPlayer = room.players.find((r) => r.seat === p.seat);
+                  const shownId = p.exposedIdentity ?? p.revealedIdentity;
+                  const isCurrent = view.nightInfo?.currentSeat === p.seat;
+                  return (
                     <div
-                      key={i}
-                      style={{
-                        width: 14,
-                        height: 20,
-                        borderRadius: 3,
-                        background: 'linear-gradient(150deg,#2b2058,#171035)',
-                        border: '1px solid rgba(232,197,116,0.35)',
-                      }}
-                    />
-                  ))}
-              </div>
+                      key={p.seat}
+                      className={`m-seat ${!p.alive ? 'dead' : ''} ${isCurrent ? 'active-turn' : ''} ${
+                        targetableSeats.includes(p.seat) ? 'targetable' : ''
+                      } ${targetMode?.first === p.seat ? 'target-picked' : ''}`}
+                      data-seat={p.seat}
+                      onClick={() => onSeatClick(p.seat)}
+                    >
+                      <div className="avatar-orb">
+                        <Avatar avatar={seatPlayer?.avatar ?? '🥷'} size={32} />
+                      </div>
+                      <div className="nick">{p.nickname}</div>
+                      <div className="tags">
+                        {p.tokenCount > 0 && <span title="荣誉代币">🏵️{p.tokenCount}</span>}
+                        {shownId && (
+                          <span className={`identity-badge ${shownId.house}`}>
+                            {shownId.house === 'ronin' ? '浪人' : `第${shownId.rank}席`}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
             </div>
-          );
-        })}
+            {centerInner}
+            {/* 公共牌横滚区 */}
+            <div className="m-played">
+              {view.players.flatMap((p) =>
+                p.played.map((c, i) => (
+                  <div key={`${p.seat}-${i}`} className={`m-played-item ${!p.alive ? 'dead' : ''}`}>
+                    <NinjaCard cardId={c} width={46} />
+                    <span>{p.seat === mySeat ? '我' : p.nickname}</span>
+                  </div>
+                )),
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            {/* 公共区：亮出的牌面朝上环绕中央（打出即公开） */}
+            {view.players.map((p) =>
+              p.played.length > 0 ? (
+                <div key={`cc-${p.seat}`} className={`center-card ${!p.alive ? 'dead' : ''}`} style={centerCardPos(p.seat)}>
+                  <NinjaCard cardId={p.played[p.played.length - 1]} width={54} />
+                  {p.played.length > 1 && <span className="cc-count">×{p.played.length}</span>}
+                  <span className="cc-owner">{p.seat === mySeat ? '我' : p.nickname}</span>
+                </div>
+              ) : null,
+            )}
+            {centerInner}
+
+            {/* 座位环 */}
+            {view.players.map((p) => {
+              const seatPlayer = room.players.find((r) => r.seat === p.seat);
+              const shownId = p.exposedIdentity ?? p.revealedIdentity;
+              const isCurrent = view.nightInfo?.currentSeat === p.seat;
+              return (
+                <div
+                  key={p.seat}
+                  className={`seat ${p.seat === mySeat ? 'me' : ''} ${!p.alive ? 'dead' : ''} ${
+                    isCurrent ? 'active-turn' : ''
+                  } ${targetableSeats.includes(p.seat) ? 'targetable' : ''} ${
+                    targetMode?.first === p.seat ? 'target-picked' : ''
+                  }`}
+                  style={seatPos(p.seat)}
+                  data-seat={p.seat}
+                  onClick={() => onSeatClick(p.seat)}
+                >
+                  <div className="avatar-orb">
+                    <Avatar avatar={seatPlayer?.avatar ?? '🥷'} size={30} />
+                  </div>
+                  <div className="nick">
+                    {p.seat === mySeat ? '我' : p.nickname}
+                    {seatPlayer && !seatPlayer.connected && !p.isBot ? ' ·掉线' : ''}
+                  </div>
+                  <div className="tags">
+                    {p.tokenCount > 0 && <span title={`持有 ${p.tokenCount} 枚荣誉代币`}>🏵️{p.tokenCount}</span>}
+                    {shownId && (
+                      <span className={`identity-badge ${shownId.house}`}>
+                        {shownId.house === 'ronin' ? '浪人' : `第${shownId.rank}席`}
+                      </span>
+                    )}
+                  </div>
+                  <div className="mini-cards">
+                    {p.seat !== mySeat &&
+                      Array.from({ length: Math.max(0, p.handCount) }).map((_, i) => (
+                        <div
+                          key={i}
+                          style={{
+                            width: 14,
+                            height: 20,
+                            borderRadius: 3,
+                            background: 'linear-gradient(150deg,#2b2058,#171035)',
+                            border: '1px solid rgba(232,197,116,0.35)',
+                          }}
+                        />
+                      ))}
+                  </div>
+                </div>
+              );
+            })}
+          </>
+        )}
 
         {/* 特效层 */}
         <div className="fx-layer">
@@ -678,7 +751,7 @@ export default function NonTable() {
               {view.you.hand.length > 0 && (
                 <CardGroup label={`✋ 已保留 ${view.you.hand.length} 张`}>
                   {view.you.hand.map((c) => (
-                    <NinjaCard key={c} cardId={c} width={64} />
+                    <NinjaCard key={c} cardId={c} width={cw(64)} />
                   ))}
                 </CardGroup>
               )}
@@ -693,7 +766,7 @@ export default function NonTable() {
                       <NinjaCard
                         cardId={c}
                         clickable
-                        width={96}
+                        width={cw(96)}
                         onClick={() => act({ type: 'non:draftPick', cardId: c })}
                       />
                     </CardWithTag>
@@ -714,7 +787,7 @@ export default function NonTable() {
                 .filter((c) => ['mirror-monk', 'martyr'].includes(c.split('#')[0]))
                 .map((c) => (
                   <CardWithTag key={c} tag={c.split('#')[0] === 'mirror-monk' ? '反弹' : '得币存活'}>
-                    <NinjaCard cardId={c} clickable width={92} onClick={() => act({ type: 'non:react', cardId: c })} />
+                    <NinjaCard cardId={c} clickable width={cw(92)} onClick={() => act({ type: 'non:react', cardId: c })} />
                   </CardWithTag>
                 ))}
               <div className="hand-actions">
@@ -729,7 +802,7 @@ export default function NonTable() {
               <CardGroup label={`🕯️ ${view.nightInfo?.phaseLabel} · 点击打出（打出即公开，不打出则此牌作废）`}>
                 {myMatchingCards.map((c) => (
                   <CardWithTag key={c} tag="打出">
-                    <NinjaCard cardId={c} clickable width={96} onClick={() => act({ type: 'non:phasePlay', cardId: c })} />
+                    <NinjaCard cardId={c} clickable width={cw(96)} onClick={() => act({ type: 'non:phasePlay', cardId: c })} />
                   </CardWithTag>
                 ))}
               </CardGroup>
@@ -758,7 +831,7 @@ export default function NonTable() {
             !myWindowPending && (
               <CardGroup label="🕶️ 手牌（未打出）" dim>
                 {view.you.hand.map((c) => (
-                  <NinjaCard key={c} cardId={c} width={64} />
+                  <NinjaCard key={c} cardId={c} width={cw(64)} />
                 ))}
               </CardGroup>
             )}
@@ -799,7 +872,7 @@ export default function NonTable() {
             ) : (
               view.discardPile.map((d) => (
                 <div key={d} className="grave-item">
-                  <NinjaCard cardId={d} width={72} />
+                  <NinjaCard cardId={d} width={cw(72)} />
                   <div className="grave-btns">
                     <button
                       className="app-btn small primary"
