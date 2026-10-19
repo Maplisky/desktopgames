@@ -138,8 +138,9 @@ export default function Room() {
           </div>
         </div>
 
-        <ChatPanel />
+        {/* 聊天为可拖动/可收起的悬浮窗，自行定位 */}
       </div>
+      <ChatPanel />
     </div>
   );
 }

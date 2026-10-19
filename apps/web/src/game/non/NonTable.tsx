@@ -841,10 +841,8 @@ export default function NonTable() {
         )}
       </div>
 
-      {/* 对局中迷你聊天 */}
-      <div style={{ position: 'absolute', right: 12, top: 46, bottom: 160, width: 250, zIndex: 25 }}>
-        <ChatPanel />
-      </div>
+      {/* 对局聊天：可拖动/可收起的悬浮窗 */}
+      <ChatPanel />
 
       {/* 官方回合流程卡（可开合） */}
       <AnimatePresence>
