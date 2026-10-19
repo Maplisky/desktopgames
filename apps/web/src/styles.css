@@ -1358,6 +1358,29 @@ input.app-input::placeholder {
   font-size: 30px;
   filter: drop-shadow(0 0 8px rgba(255, 80, 60, 0.8));
 }
+/* 牌使用特效：图腾上升 + 光环扩散 */
+.card-fx {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 45;
+}
+.card-fx-ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 92px;
+  height: 92px;
+  margin: -46px 0 0 -46px;
+  border: 2.5px solid;
+  border-radius: 50%;
+}
+.card-fx-icon {
+  display: block;
+  text-align: center;
+  font-size: 36px;
+  filter: drop-shadow(0 0 12px currentColor);
+}
 .seat-flash {
   position: absolute;
   width: 90px;

@@ -27,6 +27,40 @@ const PHASE_TRACK: Array<{ id: string; label: string; night?: boolean }> = [
   { id: 'score', label: '回合结束' },
 ];
 
+/** 每种牌的使用特效：图腾 + 光环颜色（non:played 打出瞬间在打出者座位爆发） */
+const CARD_FX: Record<string, { icon: string; color: string }> = {
+  spy: { icon: '👁️', color: 'rgba(108,179,224,0.85)' },
+  mystic: { icon: '👻', color: 'rgba(167,139,250,0.85)' },
+  'trick-shapeshifter': { icon: '🎭', color: 'rgba(167,139,250,0.85)' },
+  'trick-gravedigger': { icon: '⚰️', color: 'rgba(184,160,106,0.85)' },
+  'trick-troublemaker': { icon: '🌀', color: 'rgba(242,207,138,0.85)' },
+  'trick-spirit-merchant': { icon: '🪙', color: 'rgba(240,205,138,0.9)' },
+  'trick-thief': { icon: '🃏', color: 'rgba(224,104,79,0.85)' },
+  'trick-judge': { icon: '⚖️', color: 'rgba(232,101,90,0.9)' },
+  'blind-assassin': { icon: '🌑', color: 'rgba(70,40,110,0.9)' },
+  shinobi: { icon: '🌿', color: 'rgba(123,216,166,0.85)' },
+  'mirror-monk': { icon: '🪞', color: 'rgba(255,227,166,0.95)' },
+  martyr: { icon: '🕊️', color: 'rgba(255,244,214,0.95)' },
+  mastermind: { icon: '😈', color: 'rgba(240,205,138,0.95)' },
+};
+
+/** 每种牌的专属音效 */
+const CARD_SFX: Record<string, string> = {
+  spy: 'spy',
+  mystic: 'mystic',
+  'trick-shapeshifter': 'trickster',
+  'trick-gravedigger': 'grave',
+  'trick-troublemaker': 'trickster',
+  'trick-spirit-merchant': 'coin',
+  'trick-thief': 'steal',
+  'trick-judge': 'judge',
+  'blind-assassin': 'dark',
+  shinobi: 'stealth',
+  'mirror-monk': 'monk',
+  martyr: 'martyr',
+  mastermind: 'mastermind',
+};
+
 /** 变体类诡术师的操作方式（先选方式，再点目标座位） */
 const VARIANTS: Record<string, Array<{ value: string; label: string; hint: string }>> = {
   'trick-troublemaker': [
@@ -55,6 +89,13 @@ interface FxShuriken {
   id: number;
   from: { x: number; y: number };
   to: { x: number; y: number };
+  icon: string;
+}
+interface CardFx {
+  id: number;
+  seat: number;
+  icon: string;
+  color: string;
 }
 interface BannerState {
   kind: 'round';
@@ -103,6 +144,7 @@ export default function NonTable() {
   const stageRef = useRef<HTMLDivElement>(null);
   const [flashes, setFlashes] = useState<FxFlash[]>([]);
   const [shurikens, setShurikens] = useState<FxShuriken[]>([]);
+  const [cardFxs, setCardFxs] = useState<CardFx[]>([]);
   const [vignette, setVignette] = useState(0);
   const [banner, setBanner] = useState<BannerState | null>(null);
   const [targetMode, setTargetMode] = useState<{ card: string; first?: number } | null>(null);
@@ -153,10 +195,17 @@ export default function NonTable() {
     setTimeout(() => setFlashes((f) => f.filter((x) => x.id !== id)), 700);
   };
 
-  const fly = (fromSeat: number, toSeat: number) => {
+  const fly = (fromSeat: number, toSeat: number, icon = '🗡️') => {
     const id = ++fxId;
-    setShurikens((s) => [...s, { id, from: seatCenter(fromSeat), to: seatCenter(toSeat) }]);
+    setShurikens((s) => [...s, { id, from: seatCenter(fromSeat), to: seatCenter(toSeat), icon }]);
     setTimeout(() => setShurikens((s) => s.filter((x) => x.id !== id)), 900);
+  };
+
+  /** 牌使用特效：在指定座位爆发图腾 + 光环（自身座位缺失时用舞台中心） */
+  const castFx = (seat: number, fx: { icon: string; color: string }) => {
+    const id = ++fxId;
+    setCardFxs((f) => [...f, { id, seat, ...fx }]);
+    setTimeout(() => setCardFxs((f) => f.filter((x) => x.id !== id)), 1150);
   };
 
   function handleEvent(e: GameEvent) {
@@ -187,10 +236,14 @@ export default function NonTable() {
         }
         break;
       case 'non:played': {
-        audio.sfx('flip');
+        const base = String(p.cardId);
         const who = view?.players.find((x) => x.seat === Number(p.seat));
+        // 使用特效：图腾+光环爆发 + 专属音效
+        const fx = CARD_FX[base];
+        if (fx) castFx(Number(p.seat), fx);
+        audio.sfx(CARD_SFX[base] ?? 'flip');
         pushToast({
-          text: `${who?.nickname ?? String(p.seat) + ' 号位'} 亮出了 ${CARDS[String(p.cardId)]?.name ?? String(p.cardId)}`,
+          text: `${who?.nickname ?? String(p.seat) + ' 号位'} 亮出了 ${CARDS[base]?.name ?? base}`,
         });
         break;
       }
@@ -236,7 +289,8 @@ export default function NonTable() {
         audio.sfx('token');
         break;
       case 'non:tokenSteal':
-        audio.sfx('token');
+        fly(Number(p.from), Number(p.to), '🏵️');
+        audio.sfx('steal');
         pushToast({ text: `${String(p.to)} 号位从 ${String(p.from)} 号位拿走了一枚代币` });
         break;
       case 'non:tokenSwap':
@@ -247,6 +301,7 @@ export default function NonTable() {
         audio.sfx('card');
         break;
       case 'non:exposed':
+        flash(Number(p.seat), 'rgba(242,207,138,0.75)');
         pushToast({
           text: `${String(p.seat)} 号位的身份被公开了！`,
           identity: { house: String(p.house), rank: Number(p.rank) },
@@ -258,6 +313,15 @@ export default function NonTable() {
         pushToast({ text: `获得 ${String(p.gained)} 点荣誉（共 ${String(p.total)}）` });
         break;
       case 'non:honorDraw':
+        break;
+      case 'non:judged':
+        flash(Number(p.target), 'rgba(232,101,90,0.8)');
+        audio.sfx('judge');
+        break;
+      case 'non:mastermindRevealed':
+        castFx(Number(p.seat), CARD_FX.mastermind);
+        audio.sfx('mastermind');
+        pushToast({ text: `${String(p.seat)} 号位揭示了主谋！` });
         break;
       case 'non:roundEnd': {
         const winner = String(p.winner);
@@ -646,10 +710,42 @@ export default function NonTable() {
                 transition={{ duration: 0.45, ease: 'easeIn' }}
                 style={{ position: 'absolute' }}
               >
-                🗡️
+                {s.icon}
               </motion.div>
             ))}
           </AnimatePresence>
+          {cardFxs.map((f) => {
+            const seatNode = document.querySelector(`[data-seat="${f.seat}"]`);
+            const stageRect = stageRef.current?.getBoundingClientRect();
+            const c = seatNode && stageRect
+              ? (() => {
+                  const r = seatNode.getBoundingClientRect();
+                  return { x: r.left + r.width / 2 - stageRect.left, y: r.top + r.height / 2 - stageRect.top };
+                })()
+              : {
+                  x: (stageRect?.width ?? 0) / 2,
+                  y: (stageRect?.height ?? 0) / 2,
+                };
+            return (
+              <div key={f.id} className="card-fx" style={{ left: c.x, top: c.y }}>
+                <motion.div
+                  className="card-fx-ring"
+                  style={{ borderColor: f.color, boxShadow: `0 0 18px ${f.color}` }}
+                  initial={{ scale: 0.4, opacity: 0.95 }}
+                  animate={{ scale: 2, opacity: 0 }}
+                  transition={{ duration: 0.95, ease: 'easeOut' }}
+                />
+                <motion.span
+                  className="card-fx-icon"
+                  initial={{ y: 6, opacity: 0, scale: 0.5 }}
+                  animate={{ y: -46, opacity: 1, scale: 1.2 }}
+                  transition={{ duration: 0.95, ease: 'easeOut' }}
+                >
+                  {f.icon}
+                </motion.span>
+              </div>
+            );
+          })}
           {flashes.map((f) => {
             const c = seatCenter(f.seat);
             return (

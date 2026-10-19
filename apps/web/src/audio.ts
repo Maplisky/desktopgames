@@ -161,6 +161,19 @@ class AudioDirector {
       case 'win': [523, 659, 784, 1046].forEach((f, i) => tone(f, 0.5, 'triangle', 0.3, undefined, i * 0.13)); break;
       case 'spare': tone(440, 0.2, 'sine', 0.25, 330); break;
       case 'peek': tone(988, 0.1, 'sine', 0.2, 1175); break;
+      /* ---- 每种牌的专属音效 ---- */
+      case 'spy': tone(880, 0.1, 'sine', 0.22, 1320); tone(1320, 0.1, 'sine', 0.18, 1760, 0.1); break;
+      case 'mystic': tone(523, 0.28, 'sine', 0.24, 659); tone(784, 0.34, 'sine', 0.2, undefined, 0.12); break;
+      case 'trickster': tone(600, 0.09, 'square', 0.18, 900); tone(900, 0.12, 'square', 0.15, 450, 0.1); break;
+      case 'grave': tone(180, 0.4, 'sine', 0.32, 90); noise(0.3, 0.22, 200); break;
+      case 'coin': tone(988, 0.09, 'sine', 0.28); tone(1319, 0.16, 'sine', 0.24, undefined, 0.08); break;
+      case 'steal': tone(300, 0.22, 'sawtooth', 0.22, 900); break;
+      case 'judge': tone(120, 0.45, 'sawtooth', 0.4, 50); noise(0.32, 0.35, 150); break;
+      case 'dark': tone(90, 0.5, 'sine', 0.38, 45); break;
+      case 'stealth': tone(440, 0.18, 'sine', 0.18, 880); tone(880, 0.14, 'sine', 0.14, 440, 0.18); break;
+      case 'monk': tone(1046, 0.28, 'triangle', 0.28); tone(1568, 0.4, 'triangle', 0.22, undefined, 0.1); break;
+      case 'martyr': [659, 784, 988].forEach((f, i) => tone(f, 0.4, 'sine', 0.24, undefined, i * 0.1)); break;
+      case 'mastermind': [220, 277, 330, 440].forEach((f, i) => tone(f, 0.5, 'triangle', 0.28, undefined, i * 0.12)); break;
       default: tone(440, 0.08, 'sine', 0.15);
     }
   }
